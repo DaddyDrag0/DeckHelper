@@ -24,6 +24,7 @@ assert.equal(formatGameRarity(3_000_000_000_000_000), '3qd')
 assert.equal(parseGameRarityText('120T'), 120_000_000_000_000)
 assert.equal(parseGameRarityText('5.6T'), 5_600_000_000_000)
 assert.ok(rarityTextMatchScore('107', '10T') < 0.16, 'Tiny OCR should treat a final 7 as a plausible T suffix')
+assert.ok(rarityTextMatchScore('N0T', '10T') < 0.05, 'Tiny OCR should tolerate N/1 confusion at the start of a rarity')
 assert.ok(rarityTextMatchScore('107', '100T') > 0.16, 'Rarity correction must not freely change the numeric magnitude')
 assert.ok(rarityTextMatchScore('1201', '120T') < 0.1, 'Tiny OCR should treat a trailing 1 as a plausible T')
 assert.ok(rarityTextMatchScore('7.8I', '7.8T') < 0.1, 'Tiny OCR should tolerate I/T suffix confusion')
@@ -69,6 +70,9 @@ if (!sourceHtml.includes('@tensorflow/tfjs@4.22.0') || !sourceHtml.includes('@te
 }
 if (!importerSource.includes('model.infer(canvas, true)') || !importerSource.includes('chooseJointHypothesis') || !importerSource.includes('joint card/rarity/border match')) {
   throw new Error('Screenshot importer is missing the visual matcher or joint card/rarity/border selection.')
+}
+if (!importerSource.includes('cropAwareArtworkDistance') || !importerSource.includes('cropPenalty * 1.25') || !importerSource.includes('bestCompatibleArtwork')) {
+  throw new Error('Screenshot importer is not reranking cropped source art or protecting identity from bad rarity OCR.')
 }
 if (!formatSource.includes('./public/card-images/')) {
   throw new Error('Card images are not using the same-origin cache.')

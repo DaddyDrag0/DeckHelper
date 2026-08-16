@@ -121,6 +121,7 @@ export function formatGameRarity(value: number): string {
 function normalizeRarityText(value: string): string {
   return value
     .replace(/\s+/g, '')
+    .replace(/^[Nn](?=\d)/, '1')
     .replace(/[Oo]/g, '0')
     .replace(/Q[Dd]/gi, 'qd')
     .replace(/Q[Tt]/gi, 'qt')
@@ -271,6 +272,25 @@ function bestPairwiseDistance(
   distances.sort((first, second) => first - second)
   if (distances.length === 1) return distances[0]
   return distances[0] * 0.78 + distances[1] * 0.22
+}
+
+function cropAwareArtworkDistance(
+  embeddings: number[][],
+  signatures: number[][],
+  reference: ArtworkReference,
+  usingEmbeddings: boolean,
+): number {
+  // These signatures are generated from several matching inner crops on both the Roblox
+  // inventory cell and the original card image. Because the game commonly zooms/crops card
+  // art, direct crop similarity is a stronger identity signal than MobileNet by itself.
+  const cropDistance = bestPairwiseDistance(signatures, reference.signatures, signatureDistance)
+  const cropPenalty = Math.sqrt(Math.max(0, cropDistance))
+  if (!usingEmbeddings) return cropPenalty
+
+  const semanticDistance = bestPairwiseDistance(embeddings, reference.embeddings, embeddingDistance)
+  // MobileNet keeps the search tolerant of scaling/compression, while the same-image crop
+  // comparison prevents visually similar fantasy/anime cards from outranking the real source.
+  return semanticDistance * 0.55 + cropPenalty * 1.25
 }
 
 function signatureFromCanvas(canvas: HTMLCanvasElement): number[] {
@@ -733,8 +753,8 @@ function chooseJointHypothesis(
   // Rarity is allowed to correct an artwork mistake, but only inside a broad visual neighborhood.
   // This keeps a completely unrelated card with a coincidentally matching rarity from winning.
   const artworkLimit = usingEmbeddings
-    ? bestArt + 0.19
-    : bestArt * 1.75 + 0.006
+    ? bestArt + 0.13
+    : bestArt * 1.55 + 0.004
   const visuallyPlausible = artworkRanking.filter((candidate, index) => index < 180 && candidate.distance <= artworkLimit)
   if (!visuallyPlausible.length) visuallyPlausible.push(artworkRanking[0])
 
@@ -752,6 +772,14 @@ function chooseJointHypothesis(
     }
   }
   if (!compatible.length) return null
+
+  // OCR on the tiny rarity label can occasionally be confidently wrong (for example 7.8T -> 5T).
+  // Never let rarity drag identity to a materially worse artwork match. If the nearest rarity-valid
+  // card is not close to the best crop/pixel match, keep the artwork identity and mark rarity/border
+  // for review instead of inventing another card.
+  const bestCompatibleArtwork = Math.min(...compatible.map((candidate) => candidate.artworkDistance))
+  const rarityCorrectionLimit = usingEmbeddings ? 0.075 : Math.max(0.003, bestArt * 0.28)
+  if (bestCompatibleArtwork > bestArt + rarityCorrectionLimit) return null
 
   const bestRarity = Math.min(...compatible.map((candidate) => candidate.rarity.score))
   const rarityLimit = Math.min(RARITY_CONSTRAINT_LIMIT, bestRarity + RARITY_TIE_MARGIN)
@@ -788,12 +816,10 @@ async function matchCell(
 
   const usingEmbeddings = embeddings.length > 0 && references.every((reference) => reference.embeddings.length > 0)
   const artworkRanking = references
-    .map((reference) => {
-      const distance = usingEmbeddings
-        ? bestPairwiseDistance(embeddings, reference.embeddings, embeddingDistance)
-        : bestPairwiseDistance(signatures, reference.signatures, signatureDistance)
-      return { reference, distance }
-    })
+    .map((reference) => ({
+      reference,
+      distance: cropAwareArtworkDistance(embeddings, signatures, reference, usingEmbeddings),
+    }))
     .sort((left, right) => left.distance - right.distance)
 
   if (!artworkRanking.length) throw new Error('No card artwork references were available.')
@@ -849,7 +875,7 @@ async function matchCell(
     .slice(0, 12)
     .map((candidate) => candidate.reference.card.name))].slice(0, 3)
 
-  const methodPrefix = usingEmbeddings ? 'MobileNet artwork' : 'Artwork fallback'
+  const methodPrefix = usingEmbeddings ? 'MobileNet + crop-pixel artwork' : 'Crop-pixel artwork'
   const correctedRarity = rarityConstrained ? chosenBorder.rarity.expectedText : displayedRarity
   const method = rarityConstrained
     ? `${methodPrefix} + joint card/rarity/border match`
