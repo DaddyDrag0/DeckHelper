@@ -28,7 +28,8 @@ export class DeckHelperApp {
   private tab: Tab = 'pool'
   private ranking: Ranking = 'average'
   private cardSearch = ''
-  private addCardName = ''
+  private poolSearch = ''
+  private poolBorders = new Map<string, BorderName[]>()
   private auraSearch = ''
   private worker: Worker | null = null
   private progress: OptimizerProgress | null = null
@@ -39,7 +40,6 @@ export class DeckHelperApp {
   private error = ''
 
   constructor(private root: HTMLElement) {
-    this.syncPool()
     this.syncCurrentDeck()
     this.root.addEventListener('click', (event) => this.onClick(event))
     this.root.addEventListener('change', (event) => this.onChange(event))
@@ -54,22 +54,8 @@ export class DeckHelperApp {
   }
 
   private persist() {
-    this.syncPool()
     this.syncCurrentDeck()
     saveState(this.state)
-  }
-
-  private syncPool() {
-    const owned = new Map(this.state.inventory.cards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
-    const used = new Map<string, number>()
-    this.state.pool = (this.state.pool ?? []).flatMap((card) => {
-      const key = teamCardVariantKey(card)
-      const source = owned.get(key)
-      const count = used.get(key) ?? 0
-      if (!source || count >= source.quantity) return []
-      used.set(key, count + 1)
-      return [{ cardName: source.cardName, borders: canonicalBorders(source.borders) }]
-    })
   }
 
   private syncCurrentDeck() {
@@ -96,7 +82,6 @@ export class DeckHelperApp {
   }
 
   private render() {
-    this.syncPool()
     this.syncCurrentDeck()
     const workspace = this.tab === 'pool' ? this.renderPool() : this.tab === 'optimize' ? this.renderOptimize() : this.renderDecks()
     this.root.innerHTML = `
@@ -108,7 +93,7 @@ export class DeckHelperApp {
           </div>
           <div class="top-stats">
             <span><b>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0)}</b> owned copies</span>
-            <span><b>${this.state.pool.length}</b> in pool</span>
+            <span><b>${this.poolCatalogCards().length}</b> pool cards</span>
             <span><b>${this.state.favorites.length}</b> saved decks</span>
           </div>
         </header>
@@ -122,14 +107,14 @@ export class DeckHelperApp {
             </nav>
             <div class="workspace-content">${workspace}</div>
           </section>
-          <aside class="inventory-side">${this.renderInventory()}</aside>
+          <aside class="inventory-side" data-drop-zone="inventory">${this.renderInventory()}</aside>
         </main>
       </div>
     `
   }
 
   private tabButton(tab: Tab, label: string) {
-    const count = tab === 'pool' ? this.state.pool.length : tab === 'decks' ? this.state.favorites.length : this.results.length
+    const count = tab === 'pool' ? this.poolCatalogCards().length : tab === 'decks' ? this.state.favorites.length : this.results.length
     return `<button class="workspace-tab ${this.tab === tab ? 'active' : ''}" data-action="tab" data-tab="${tab}"><span>${label}</span><b>${count}</b></button>`
   }
 
@@ -171,13 +156,10 @@ export class DeckHelperApp {
     const filteredAuras = auras.filter((aura) => !auraQuery || aura.name.toLowerCase().includes(auraQuery) || (aura.skillName || '').toLowerCase().includes(auraQuery))
     return `
       <div class="inventory-side-head">
-        <div><span class="eyebrow">Drag source</span><h2>Your Inventory</h2></div>
-        <p>Each exact border combination is its own draggable card. Drag the same variant again when you own multiple copies.</p>
+        <div><span class="eyebrow">Drop destination</span><h2>Your Inventory</h2></div>
+        <p>Drag cards from Pool into this panel. Each exact border combination is stored separately; dropping the same variant again increases its quantity.</p>
+        <div class="inventory-drop-hint">Drop Pool cards anywhere in this panel</div>
       </div>
-      <section class="inventory-add panel-soft">
-        <label><span>Add card or another variant</span><div class="add-card-row"><input id="add-card-name" list="card-catalog" value="${escapeHtml(this.addCardName)}" placeholder="Type a card name"><button class="primary" data-action="add-selected-card">Add</button></div></label>
-        <datalist id="card-catalog">${cards.map((card) => `<option value="${escapeHtml(card.name)}"></option>`).join('')}</datalist>
-      </section>
       <label class="inventory-search"><span>Search inventory</span><input id="card-search" value="${escapeHtml(this.cardSearch)}" placeholder="Name, ability, or border"></label>
       <div class="inventory-variant-list">
         ${variants.length ? variants.map((owned) => this.renderInventoryCard(owned)).join('') : `<div class="inventory-empty">${this.state.inventory.cards.length ? 'No variants match this search.' : 'Add your first card above.'}</div>`}
@@ -198,7 +180,6 @@ export class DeckHelperApp {
   private renderInventoryCard(owned: OwnedCard) {
     const definition = cards.find((card) => card.name === owned.cardName)
     const encodedKey = encodeURIComponent(cardVariantKey(owned.cardName, owned.borders))
-    const poolCount = this.state.pool.filter((card) => teamCardVariantKey(card) === cardVariantKey(owned.cardName, owned.borders)).length
     return `
       <article class="owned-variant-card" draggable="true" data-drag-card="${escapeHtml(encodedKey)}" data-drag-origin="inventory">
         <div class="owned-card-top">
@@ -207,9 +188,8 @@ export class DeckHelperApp {
             <strong>${escapeHtml(owned.cardName)}</strong>
             <span>${escapeHtml(borderLabel(owned.borders))}</span>
             <small>${escapeHtml(definition?.ability || 'No ability')}</small>
-            <div class="copy-line"><b>×${owned.quantity}</b><span>${poolCount ? `${poolCount} in pool` : 'drag to pool'}</span></div>
+            <div class="copy-line"><b>×${owned.quantity}</b><span>drag to deck</span></div>
           </div>
-          <button class="pool-arrow" data-action="pool-add" data-key="${escapeHtml(encodedKey)}" title="Add one copy to Pool">←</button>
         </div>
         <div class="border-picker compact-picker">
           ${CARD_BORDERS.map((border) => `<label><input type="checkbox" data-action="card-border" data-key="${escapeHtml(encodedKey)}" data-border="${border}" ${owned.borders.includes(border) ? 'checked' : ''}><span>${border[0]}</span></label>`).join('')}
@@ -221,60 +201,75 @@ export class DeckHelperApp {
             <option value="">Any pos.</option>
             ${[0, 1, 2, 3].map((position) => `<option value="${position}" ${owned.lockedPosition === position ? 'selected' : ''}>Pos. ${position + 1}</option>`).join('')}
           </select>
-          <button class="subtle" data-action="add-card" data-name="${escapeHtml(owned.cardName)}">+ Variant</button>
           <button class="danger subtle" data-action="remove-card" data-key="${escapeHtml(encodedKey)}">Remove</button>
         </div>
       </article>
     `
   }
 
-  private renderPool() {
-    const deck = this.state.currentDeck
+  private poolCatalogCards() {
+    return cards.filter((card) => !card.unobtainable || card.name.toLowerCase().includes('conqueror'))
+  }
+
+  private filteredPoolCards() {
+    const query = this.poolSearch.trim().toLowerCase()
+    return this.poolCatalogCards().filter((card) => !query
+      || card.name.toLowerCase().includes(query)
+      || (card.ability || '').toLowerCase().includes(query)
+      || (card.weather || '').toLowerCase().includes(query)
+      || (card.pack || '').toLowerCase().includes(query))
+  }
+
+  private poolBordersFor(cardName: string): BorderName[] {
+    return canonicalBorders(this.poolBorders.get(cardName) ?? [])
+  }
+
+  private poolPayload(cardName: string): string {
+    return encodeURIComponent(JSON.stringify({ cardName, borders: this.poolBordersFor(cardName) }))
+  }
+
+  private borderRarityMultiplier(borders: BorderName[]): number {
+    const multipliers: Record<BorderName, number> = { Platinum: 100, Crystal: 10_000, Ruby: 100_000, Galaxy: 1_000_000 }
+    return canonicalBorders(borders).reduce((value, border) => value * multipliers[border], 1)
+  }
+
+  private renderPoolCard(card: (typeof cards)[number]) {
+    const borders = this.poolBordersFor(card.name)
+    const key = cardVariantKey(card.name, borders)
+    const owned = this.state.inventory.cards.find((entry) => cardVariantKey(entry.cardName, entry.borders) === key)
+    const effectiveRarity = card.rarity * this.borderRarityMultiplier(borders)
     return `
-      <section class="page-head split">
-        <div><span class="eyebrow">Candidate workspace</span><h2>Pool</h2><p>Drag exact card variants from your inventory into this pool. Each drag adds one owned copy; the optimizer only searches cards placed here.</p></div>
-        <button data-action="pool-clear" ${this.state.pool.length ? '' : 'disabled'}>Clear Pool</button>
-      </section>
-      <section class="pool-drop panel" data-drop-zone="pool">
-        <div class="drop-zone-label"><strong>${this.state.pool.length} copies in pool</strong><span>Drop inventory cards anywhere in this box</span></div>
-        ${this.state.pool.length ? `<div class="pool-grid">${this.state.pool.map((card, index) => {
-          const key = cardVariantKey(card.cardName, card.borders)
-          const owned = this.state.inventory.cards.find((entry) => cardVariantKey(entry.cardName, entry.borders) === key)
-          const copyNumber = this.state.pool.slice(0, index + 1).filter((entry) => teamCardVariantKey(entry) === key).length
-          return `<article class="pool-card" draggable="true" data-drag-card="${escapeHtml(encodeURIComponent(key))}" data-drag-origin="pool">
-            ${this.renderCardVisual(card.cardName, card.borders)}
-            <strong>${escapeHtml(card.cardName)}</strong>
-            <span>${escapeHtml(borderLabel(card.borders))}</span>
-            <small>Copy ${copyNumber}${owned ? ` / ${owned.quantity}` : ''}</small>
-            <button class="pool-remove" data-action="pool-remove" data-index="${index}" title="Remove this copy">×</button>
-          </article>`
-        }).join('')}</div>` : `<div class="pool-empty"><b>Drop cards here</b><span>Use the inventory on the right. You can also press the ← button on a card.</span></div>`}
-      </section>
-      <section class="panel current-deck drag-deck">
-        <div class="section-title"><div><span class="eyebrow">Manual deck</span><h3>Current 4-card deck</h3></div><span>Drag a card directly into the next open slot.</span></div>
-        <div class="deck-editor">${[0, 1, 2, 3].map((slot) => this.renderDeckSlot(slot as DeckSlot)).join('')}</div>
-        <div class="deck-aura-row">
-          <label><span>Stat Aura</span>${this.renderAuraSelect('stat', deck.statAura)}</label>
-          <label><span>Ability Aura</span>${this.renderAuraSelect('ability', deck.abilityAura)}</label>
+      <article class="pool-catalog-card" draggable="true" data-drag-origin="pool" data-drag-card="${escapeHtml(this.poolPayload(card.name))}">
+        ${this.renderCardVisual(card.name, borders)}
+        <div class="pool-card-info">
+          <strong>${escapeHtml(card.name)}</strong>
+          <span>${escapeHtml(card.ability || 'No ability')}</span>
+          <small>${escapeHtml(borderLabel(borders))} · 1/${formatCompact(effectiveRarity)}</small>
         </div>
-      </section>
-      <section class="pool-help panel-soft"><b>How copies work</b><span>Platinum+Crystal Heaven's Armor and Galaxy Heaven's Armor are separate draggable variants. If either variant has Qty 2, you can drag that exact variant twice.</span></section>
+        <div class="pool-border-picker" title="Choose the exact borders before dragging">
+          ${CARD_BORDERS.map((border) => `<label class="pool-border-${border.toLowerCase()}"><input type="checkbox" data-action="pool-border" data-name="${escapeHtml(card.name)}" data-border="${border}" ${borders.includes(border) ? 'checked' : ''}><span>${border[0]}</span></label>`).join('')}
+        </div>
+        <div class="pool-card-foot">
+          <span>${owned ? `Owned ×${owned.quantity}` : 'Not owned'}</span>
+          <button data-action="pool-add-selected" data-name="${escapeHtml(card.name)}" title="Add this selected variant to inventory">Add →</button>
+        </div>
+      </article>
     `
   }
 
-  private poolInventory() {
-    const counts = new Map<string, number>()
-    for (const card of this.state.pool) {
-      const key = teamCardVariantKey(card)
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-    return {
-      ...this.state.inventory,
-      cards: this.state.inventory.cards.flatMap((card) => {
-        const quantity = counts.get(cardVariantKey(card.cardName, card.borders)) ?? 0
-        return quantity ? [{ ...card, borders: canonicalBorders(card.borders), quantity }] : []
-      }),
-    }
+  private renderPool() {
+    const visible = this.filteredPoolCards()
+    const total = this.poolCatalogCards().length
+    return `
+      <section class="page-head split">
+        <div><span class="eyebrow">Game card catalog</span><h2>Pool</h2><p>All obtainable cards are here, plus Conqueror. Pick P / C / R / G on a card, then drag it into Your Inventory. No borders selected means Base.</p></div>
+      </section>
+      <section class="panel pool-catalog">
+        <label class="pool-search"><span>Search Pool</span><input id="pool-search" value="${escapeHtml(this.poolSearch)}" placeholder="Card name, ability, weather, or pack"></label>
+        <div class="pool-catalog-summary"><strong>${visible.length}</strong><span>of ${total} Pool cards shown</span><em>Border selection changes the card frame before you drag it.</em></div>
+        <div class="pool-catalog-grid">${visible.map((card) => this.renderPoolCard(card)).join('')}</div>
+      </section>
+    `
   }
 
   private renderInventoryAura(name: string, type: 'stat' | 'ability') {
@@ -298,19 +293,19 @@ export class DeckHelperApp {
   }
 
   private renderOptimize() {
-    const searchInventory = this.poolInventory()
+    const searchInventory = this.state.inventory
     const lockedCards = searchInventory.cards.filter((card) => card.locked || card.lockedPosition !== null)
     const lockedStat = searchInventory.statAuras.find((aura) => aura.locked)
     const lockedAbility = searchInventory.abilityAuras.find((aura) => aura.locked)
     const sorted = this.sortedResults()
     return `
       <section class="page-head split">
-        <div><span class="eyebrow">Battle simulator search</span><h2>Optimize</h2><p>Only the exact copies in your Pool are considered. Drag more variants in or remove copies to control the search space.</p></div>
-        <div class="actions">${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button class="primary" data-action="start-search" ${this.state.pool.length < 4 ? 'disabled' : ''}>Find Best 4-Card Teams</button>`}</div>
+        <div><span class="eyebrow">Battle simulator search</span><h2>Optimize</h2><p>All exact variants and quantities in Your Inventory are considered. Pool is only the catalog used to build your inventory.</p></div>
+        <div class="actions">${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button class="primary" data-action="start-search" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Find Best 4-Card Teams</button>`}</div>
       </section>
       <section class="optimizer-pool-preview panel-soft">
-        <div><strong>Pool</strong><span>${this.state.pool.length} copies · ${searchInventory.cards.length} exact variants</span></div>
-        <div class="mini-card-row">${this.state.pool.slice(0, 12).map((card) => this.renderCardVisual(card.cardName, card.borders, true)).join('')}${this.state.pool.length > 12 ? `<b>+${this.state.pool.length - 12}</b>` : ''}</div>
+        <div><strong>Your Inventory</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0)} copies · ${searchInventory.cards.length} exact variants</span></div>
+        <div class="mini-card-row">${searchInventory.cards.slice(0, 12).map((card) => this.renderCardVisual(card.cardName, card.borders, true)).join('')}${searchInventory.cards.length > 12 ? `<b>+${searchInventory.cards.length - 12}</b>` : ''}</div>
       </section>
       <section class="lock-summary panel">
         <div><span>Locked cards</span><strong>${lockedCards.length ? lockedCards.map((card) => `${escapeHtml(card.cardName)} · ${escapeHtml(borderLabel(card.borders))}${card.lockedPosition !== null ? ` (#${card.lockedPosition + 1})` : ''}`).join(', ') : 'None'}</strong></div>
@@ -321,7 +316,7 @@ export class DeckHelperApp {
       ${this.results.length ? `
         <section class="results-head"><h3>Top Teams</h3><div class="ranking-tabs">${this.rankingButton('average', 'Average')}${this.rankingButton('median', 'Median')}${this.rankingButton('minimum', 'Safest')}${this.rankingButton('maximum', 'Ceiling')}${this.rankingButton('consistency', 'Consistent')}</div></section>
         <section class="result-list">${sorted.map((result, index) => this.renderResult(result, index + 1)).join('')}</section>
-      ` : `<section class="empty-state panel"><strong>${this.state.pool.length < 4 ? 'Your Pool needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.pool.length < 4 ? 'Drag cards from the inventory on the right into Pool.' : 'Start the search when you are ready.'}</span></section>`}
+      ` : `<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Your Inventory needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Drag cards from Pool into Your Inventory on the right.' : 'Start the search when you are ready.'}</span></section>`}
     `
   }
 
@@ -386,14 +381,14 @@ export class DeckHelperApp {
     const deck = this.state.currentDeck
     const complete = deck.cards.length === 4
     return `
-      <section class="page-head"><div><span class="eyebrow">Favorites</span><h2>Saved Decks</h2><p>Save the current deck from your Pool workspace or reload a favorite exactly as it was saved.</p></div></section>
+      <section class="page-head"><div><span class="eyebrow">Favorites</span><h2>Saved Decks</h2><p>Build the current deck by dragging owned variants from Your Inventory, then save or reload it exactly as configured.</p></div></section>
       <section class="panel current-deck saved-current">
-        <div class="section-title"><div><h3>Current Deck</h3><span>${complete ? 'Ready to save' : `${deck.cards.length}/4 cards`}</span></div></div>
-        <div class="saved-team-preview">${[0, 1, 2, 3].map((slot) => {
-          const card = deck.cards[slot]
-          return card ? `<div>${this.renderCardVisual(card.cardName, card.borders)}<strong>${escapeHtml(card.cardName)}</strong><span>${escapeHtml(borderLabel(card.borders))}</span></div>` : `<div class="saved-empty-slot"><b>${slot + 1}</b><span>Empty</span></div>`
-        }).join('')}</div>
-        <div class="aura-line"><span>Stat: <b>${escapeHtml(auraLabel(deck.statAura))}</b></span><span>Ability: <b>${escapeHtml(auraLabel(deck.abilityAura))}</b></span></div>
+        <div class="section-title"><div><h3>Current Deck</h3><span>${complete ? 'Ready to save' : `${deck.cards.length}/4 cards`}</span></div><span>Drag owned variants from the inventory on the right.</span></div>
+        <div class="deck-editor">${[0, 1, 2, 3].map((slot) => this.renderDeckSlot(slot as DeckSlot)).join('')}</div>
+        <div class="deck-aura-row">
+          <label><span>Stat Aura</span>${this.renderAuraSelect('stat', deck.statAura)}</label>
+          <label><span>Ability Aura</span>${this.renderAuraSelect('ability', deck.abilityAura)}</label>
+        </div>
         <div class="save-row"><input id="favorite-name" placeholder="Deck name"><button class="primary" data-action="save-current" ${complete ? '' : 'disabled'}>Save Deck</button></div>
       </section>
       ${this.progress?.phase === 'replacement' ? this.renderProgress(this.progress) : ''}
@@ -416,7 +411,7 @@ export class DeckHelperApp {
     return `
       <div class="deck-drop-slot ${current ? 'filled' : ''} ${isNextSlot ? '' : 'locked-drop'}" ${isNextSlot ? `data-drop-zone="deck" data-slot="${slot}"` : ''}>
         <span class="slot-number">${slot + 1}</span>
-        ${current ? `${this.renderCardVisual(current.cardName, current.borders)}<strong>${escapeHtml(current.cardName)}</strong><span>${escapeHtml(borderLabel(current.borders))}<button class="slot-clear" data-action="deck-clear" data-slot="${slot}" title="Clear slot">×</button></span><button class="replacement-button" data-action="replacement" data-slot="${slot}" ${this.state.currentDeck.cards.length === 4 && !this.worker ? '' : 'disabled'}>Best replacement</button>` : `<div class="slot-placeholder"><b>${isNextSlot ? 'Drop card here' : 'Fill earlier slots first'}</b><span>${isNextSlot ? 'Inventory or Pool card' : ''}</span></div>`}
+        ${current ? `${this.renderCardVisual(current.cardName, current.borders)}<strong>${escapeHtml(current.cardName)}</strong><span>${escapeHtml(borderLabel(current.borders))}<button class="slot-clear" data-action="deck-clear" data-slot="${slot}" title="Clear slot">×</button></span><button class="replacement-button" data-action="replacement" data-slot="${slot}" ${this.state.currentDeck.cards.length === 4 && !this.worker ? '' : 'disabled'}>Best replacement</button>` : `<div class="slot-placeholder"><b>${isNextSlot ? 'Drop card here' : 'Fill earlier slots first'}</b><span>${isNextSlot ? 'Owned inventory card' : ''}</span></div>`}
       </div>
     `
   }
@@ -466,11 +461,12 @@ export class DeckHelperApp {
     if (target.id === 'card-search') {
       this.cardSearch = target.value
       this.renderAndRefocus('card-search')
+    } else if (target.id === 'pool-search') {
+      this.poolSearch = target.value
+      this.renderAndRefocus('pool-search')
     } else if (target.id === 'aura-search') {
       this.auraSearch = target.value
       this.renderAndRefocus('aura-search')
-    } else if (target.id === 'add-card-name') {
-      this.addCardName = target.value
     }
   }
 
@@ -478,6 +474,7 @@ export class DeckHelperApp {
     const target = event.target
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     const action = target.dataset.action
+    if (action === 'pool-border' && target instanceof HTMLInputElement) this.togglePoolBorder(target.dataset.name || '', target.dataset.border as BorderName, target.checked)
     if (action === 'card-border' && target instanceof HTMLInputElement) this.toggleCardBorder(target.dataset.key || '', target.dataset.border as BorderName, target.checked)
     if (action === 'card-quantity' && target instanceof HTMLInputElement) this.setCardQuantity(target.dataset.key || '', target.value)
     if (action === 'card-lock' && target instanceof HTMLInputElement) this.toggleCardLock(target.dataset.key || '', target.checked)
@@ -497,16 +494,9 @@ export class DeckHelperApp {
     } else if (action === 'clear-error') {
       this.error = ''
       this.render()
-    } else if (action === 'add-selected-card') {
-      const match = cards.find((card) => card.name.toLowerCase() === this.addCardName.trim().toLowerCase())
-      if (!match) { this.error = 'Choose an exact card name from the list.'; this.render(); return }
-      this.addCardName = ''
-      this.addCard(match.name)
-    } else if (action === 'add-card') this.addCard(target.dataset.name || '')
+    } else if (action === 'pool-add-selected') this.addOwnedVariant(target.dataset.name || '', this.poolBordersFor(target.dataset.name || ''))
+    else if (action === 'add-card') this.addCard(target.dataset.name || '')
     else if (action === 'remove-card') this.removeCard(target.dataset.key || '')
-    else if (action === 'pool-add') this.addPoolCard(target.dataset.key || '')
-    else if (action === 'pool-remove') this.removePoolCard(Number(target.dataset.index))
-    else if (action === 'pool-clear') { this.state.pool = []; this.persist(); this.render() }
     else if (action === 'deck-clear') this.setDeckCard(Number(target.dataset.slot) as DeckSlot, '')
     else if (action === 'add-aura') this.addAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
     else if (action === 'remove-aura') this.removeAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
@@ -549,11 +539,11 @@ export class DeckHelperApp {
     if (split < 0) return
     const origin = raw.slice(0, split)
     const encodedKey = raw.slice(split + 1)
-    if (zone.dataset.dropZone === 'pool') {
-      if (origin === 'inventory') this.addPoolCard(encodedKey)
+    if (zone.dataset.dropZone === 'inventory') {
+      if (origin === 'pool') this.addPoolPayload(encodedKey)
       return
     }
-    if (zone.dataset.dropZone === 'deck') this.setDeckCard(Number(zone.dataset.slot) as DeckSlot, encodedKey)
+    if (zone.dataset.dropZone === 'deck' && origin === 'inventory') this.setDeckCard(Number(zone.dataset.slot) as DeckSlot, encodedKey)
   }
 
   private renderAndRefocus(id: string) {
@@ -591,7 +581,6 @@ export class DeckHelperApp {
   private removeCard(encodedKey: string) {
     const key = this.decodeCardKey(encodedKey)
     this.state.inventory.cards = this.state.inventory.cards.filter((card) => cardVariantKey(card.cardName, card.borders) !== key)
-    this.state.pool = this.state.pool.filter((card) => teamCardVariantKey(card) !== key)
     this.state.currentDeck.cards = this.state.currentDeck.cards.filter((card) => teamCardVariantKey(card) !== key)
     this.persist(); this.render()
   }
@@ -615,7 +604,6 @@ export class DeckHelperApp {
       this.state.inventory.cards = this.state.inventory.cards.filter((entry) => entry !== card)
     } else card.borders = nextBorders
     const remap = (slot: TeamCard): TeamCard => teamCardVariantKey(slot) === oldKey ? { cardName: card.cardName, borders: canonicalBorders(nextBorders) } : slot
-    this.state.pool = this.state.pool.map(remap)
     this.state.currentDeck.cards = this.state.currentDeck.cards.map(remap)
     this.persist(); this.render()
   }
@@ -695,25 +683,37 @@ export class DeckHelperApp {
     this.persist(); this.render()
   }
 
-  private addPoolCard(encodedKey: string) {
-    const card = this.findOwnedCard(encodedKey)
-    if (!card) return
-    const key = cardVariantKey(card.cardName, card.borders)
-    const used = this.state.pool.filter((entry) => teamCardVariantKey(entry) === key).length
-    if (used >= card.quantity) {
-      this.error = `You only own ${card.quantity} copy${card.quantity === 1 ? '' : 'ies'} of ${card.cardName} · ${borderLabel(card.borders)}.`
-      this.render()
-      return
-    }
-    this.state.pool.push({ cardName: card.cardName, borders: canonicalBorders(card.borders) })
+  private togglePoolBorder(cardName: string, border: BorderName, checked: boolean) {
+    if (!cardName || !CARD_BORDERS.includes(border)) return
+    const current = this.poolBordersFor(cardName)
+    const next = canonicalBorders(checked ? [...current, border] : current.filter((value) => value !== border))
+    this.poolBorders.set(cardName, next)
+    this.render()
+  }
+
+  private addOwnedVariant(cardName: string, borders: BorderName[]) {
+    const definition = cards.find((card) => card.name === cardName)
+    if (!definition || (definition.unobtainable && !definition.name.toLowerCase().includes('conqueror'))) return
+    const normalized = canonicalBorders(borders)
+    const key = cardVariantKey(cardName, normalized)
+    const existing = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders) === key)
+    if (existing) existing.quantity = Math.min(999, existing.quantity + 1)
+    else this.state.inventory.cards.push({ cardName, quantity: 1, borders: normalized, locked: false, lockedPosition: null })
     this.error = ''
     this.persist(); this.render()
   }
 
-  private removePoolCard(index: number) {
-    if (!Number.isInteger(index) || index < 0 || index >= this.state.pool.length) return
-    this.state.pool.splice(index, 1)
-    this.persist(); this.render()
+  private addPoolPayload(encodedPayload: string) {
+    try {
+      const parsed = JSON.parse(decodeURIComponent(encodedPayload)) as { cardName?: unknown; borders?: unknown }
+      if (typeof parsed.cardName !== 'string') return
+      const borders = Array.isArray(parsed.borders)
+        ? parsed.borders.filter((border): border is BorderName => CARD_BORDERS.includes(border as BorderName))
+        : []
+      this.addOwnedVariant(parsed.cardName, borders)
+    } catch {
+      return
+    }
   }
 
   private setDeckAura(kind: 'stat' | 'ability', selection: AuraSelection | null) {
@@ -727,13 +727,12 @@ export class DeckHelperApp {
     this.results = []
     this.progress = null
     this.tab = 'optimize'
-    const inventory = this.poolInventory()
-    if (inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4) {
-      this.error = 'Drag at least 4 owned copies into the Pool before optimizing.'
+    if (this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4) {
+      this.error = 'Add at least 4 owned copies to Your Inventory before optimizing.'
       this.render()
       return
     }
-    this.runWorker({ kind: 'search', inventory: structuredClone(inventory) })
+    this.runWorker({ kind: 'search', inventory: structuredClone(this.state.inventory) })
   }
 
   private startReplacement(slot: DeckSlot) {
