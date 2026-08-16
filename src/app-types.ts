@@ -5,6 +5,7 @@ export type AuraOwnedBorder = 'Base' | AuraBorderName
 
 export interface OwnedCard {
   cardName: string
+  quantity: number
   borders: BorderName[]
   locked: boolean
   lockedPosition: DeckSlot | null

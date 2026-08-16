@@ -19,6 +19,9 @@ function cleanCard(value: unknown): OwnedCard | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Partial<OwnedCard>
   if (!raw.cardName || typeof raw.cardName !== 'string') return null
+  const quantity = Number.isFinite(Number(raw.quantity))
+    ? Math.max(1, Math.min(999, Math.floor(Number(raw.quantity))))
+    : 1
   const borders = Array.isArray(raw.borders)
     ? raw.borders.filter((border): border is BorderName => CARD_BORDERS.includes(border as BorderName))
     : []
@@ -27,6 +30,7 @@ function cleanCard(value: unknown): OwnedCard | null {
     : null
   return {
     cardName: raw.cardName,
+    quantity,
     borders: [...new Set(borders)],
     locked: Boolean(raw.locked || position !== null),
     lockedPosition: position,

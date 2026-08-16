@@ -55,11 +55,12 @@ export class DeckHelperApp {
 
   private syncCurrentDeck() {
     const owned = new Map(this.state.inventory.cards.map((card) => [card.cardName, card] as const))
-    const seen = new Set<string>()
+    const used = new Map<string, number>()
     this.state.currentDeck.cards = this.state.currentDeck.cards.slice(0, 4).flatMap((slot) => {
       const card = owned.get(slot.cardName)
-      if (!card || seen.has(card.cardName)) return []
-      seen.add(card.cardName)
+      const count = used.get(slot.cardName) ?? 0
+      if (!card || count >= card.quantity) return []
+      used.set(slot.cardName, count + 1)
       return [{ cardName: card.cardName, borders: [...card.borders] }]
     })
     if (!this.auraSelectionOwned(this.state.currentDeck.statAura, this.state.inventory.statAuras)) this.state.currentDeck.statAura = null
@@ -84,7 +85,7 @@ export class DeckHelperApp {
             <h1>DeckHelper</h1>
           </div>
           <div class="top-stats">
-            <span><b>${this.state.inventory.cards.length}</b> cards</span>
+            <span><b>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0)}</b> cards</span>
             <span><b>${this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length}</b> auras</span>
             <span><b>${this.state.favorites.length}</b> saved decks</span>
           </div>
@@ -154,6 +155,7 @@ export class DeckHelperApp {
           <div class="border-picker">
             ${CARD_BORDERS.map((border) => `<label><input type="checkbox" data-action="card-border" data-name="${escapeHtml(card.name)}" data-border="${border}" ${owned.borders.includes(border) ? 'checked' : ''}><span>${border}</span></label>`).join('')}
           </div>
+          <label class="quantity-field"><span>Qty</span><input type="number" min="1" max="999" step="1" value="${owned.quantity}" data-action="card-quantity" data-name="${escapeHtml(card.name)}"></label>
           <label class="lock-check"><input type="checkbox" data-action="card-lock" data-name="${escapeHtml(card.name)}" ${owned.locked ? 'checked' : ''}> Lock</label>
           <select class="position-select" data-action="card-position" data-name="${escapeHtml(card.name)}">
             <option value="">Any position</option>
@@ -194,7 +196,7 @@ export class DeckHelperApp {
       <section class="page-head split">
         <div><h2>Optimizer</h2><p>Adaptive battle-simulator search. Weak candidates are discarded early; expensive testing is reserved for stronger teams.</p></div>
         <div class="actions">
-          ${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button class="primary" data-action="start-search" ${this.state.inventory.cards.length < 4 ? 'disabled' : ''}>Find Best 4-Card Teams</button>`}
+          ${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button class="primary" data-action="start-search" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Find Best 4-Card Teams</button>`}
         </div>
       </section>
       <section class="lock-summary panel">
@@ -305,17 +307,21 @@ export class DeckHelperApp {
 
   private renderDeckSlot(slot: DeckSlot) {
     const current = this.state.currentDeck.cards[slot]
-    const usedElsewhere = new Set(this.state.currentDeck.cards.filter((_, index) => index !== slot).map((card) => card.cardName))
-    const options = this.state.inventory.cards.filter((card) => !usedElsewhere.has(card.cardName) || card.cardName === current?.cardName)
+    const usedElsewhere = new Map<string, number>()
+    this.state.currentDeck.cards.forEach((card, index) => {
+      if (index === slot) return
+      usedElsewhere.set(card.cardName, (usedElsewhere.get(card.cardName) ?? 0) + 1)
+    })
+    const options = this.state.inventory.cards.filter((card) => (usedElsewhere.get(card.cardName) ?? 0) < card.quantity || card.cardName === current?.cardName)
     const owned = current ? this.state.inventory.cards.find((card) => card.cardName === current.cardName) : undefined
     return `
       <div class="deck-slot-editor">
         <span class="slot-number">${slot + 1}</span>
         <select data-action="deck-card" data-slot="${slot}">
           <option value="">Select card</option>
-          ${options.map((card) => `<option value="${escapeHtml(card.cardName)}" ${current?.cardName === card.cardName ? 'selected' : ''}>${escapeHtml(card.cardName)}</option>`).join('')}
+          ${options.map((card) => `<option value="${escapeHtml(card.cardName)}" ${current?.cardName === card.cardName ? 'selected' : ''}>${escapeHtml(card.cardName)}${card.quantity > 1 ? ` ×${card.quantity}` : ''}</option>`).join('')}
         </select>
-        <small>${owned ? escapeHtml(borderLabel(owned.borders)) : '—'}</small>
+        <small>${owned ? `${escapeHtml(borderLabel(owned.borders))} · ${owned.quantity} owned` : '—'}</small>
         <button data-action="replacement" data-slot="${slot}" ${this.state.currentDeck.cards.length === 4 && !this.worker ? '' : 'disabled'}>Best replacement</button>
       </div>
     `
@@ -382,6 +388,7 @@ export class DeckHelperApp {
       return
     }
     if (action === 'card-border' && target instanceof HTMLInputElement) this.toggleCardBorder(target.dataset.name || '', target.dataset.border as BorderName, target.checked)
+    if (action === 'card-quantity' && target instanceof HTMLInputElement) this.setCardQuantity(target.dataset.name || '', target.value)
     if (action === 'card-lock' && target instanceof HTMLInputElement) this.toggleCardLock(target.dataset.name || '', target.checked)
     if (action === 'card-position' && target instanceof HTMLSelectElement) this.setCardPosition(target.dataset.name || '', target.value)
     if (action === 'aura-border' && target instanceof HTMLInputElement) this.toggleAuraBorder(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder, target.checked)
@@ -430,7 +437,7 @@ export class DeckHelperApp {
 
   private addCard(name: string) {
     if (!name || this.state.inventory.cards.some((card) => card.cardName === name)) return
-    this.state.inventory.cards.push({ cardName: name, borders: [], locked: false, lockedPosition: null })
+    this.state.inventory.cards.push({ cardName: name, quantity: 1, borders: [], locked: false, lockedPosition: null })
     this.persist(); this.render()
   }
 
@@ -444,6 +451,14 @@ export class DeckHelperApp {
     const card = this.state.inventory.cards.find((entry) => entry.cardName === name)
     if (!card || !CARD_BORDERS.includes(border)) return
     card.borders = checked ? [...new Set([...card.borders, border])] : card.borders.filter((value) => value !== border)
+    this.persist(); this.render()
+  }
+
+  private setCardQuantity(name: string, value: string) {
+    const card = this.state.inventory.cards.find((entry) => entry.cardName === name)
+    if (!card) return
+    const parsed = Number(value)
+    card.quantity = Number.isFinite(parsed) ? Math.max(1, Math.min(999, Math.floor(parsed))) : 1
     this.persist(); this.render()
   }
 
@@ -500,6 +515,8 @@ export class DeckHelperApp {
     else {
       const owned = this.state.inventory.cards.find((card) => card.cardName === name)
       if (!owned) return
+      const usedElsewhere = next.filter((_, index) => index !== slot).filter((card) => card.cardName === name).length
+      if (usedElsewhere >= owned.quantity) return
       const card: TeamCard = { cardName: name, borders: [...owned.borders] }
       if (slot < next.length) next[slot] = card
       else {

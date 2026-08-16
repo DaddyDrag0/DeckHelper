@@ -52,7 +52,7 @@ button.compact { padding: 7px 12px; }
 
 .card-list { display: grid; gap: 7px; max-height: 660px; overflow: auto; padding-right: 4px; }
 .inventory-row, .aura-row { display: grid; align-items: center; gap: 12px; border: 1px solid #202631; background: #0e1117; border-radius: 12px; padding: 9px; }
-.inventory-row { grid-template-columns: 48px minmax(170px, 1fr) minmax(300px, auto) auto auto auto; }
+.inventory-row { grid-template-columns: 48px minmax(170px, 1fr) minmax(300px, auto) 76px auto auto auto; }
 .inventory-row.owned, .aura-row.owned { border-color: #3b4659; background: #121721; }
 .thumb { width: 48px; height: 48px; overflow: hidden; border-radius: 9px; background: #202632; display: grid; place-items: center; color: #737b8c; }
 .thumb.small { width: 42px; height: 42px; }
@@ -64,6 +64,8 @@ button.compact { padding: 7px 12px; }
 .border-picker input, .aura-borders input { position: absolute; opacity: 0; pointer-events: none; }
 .border-picker span, .aura-borders span { display: block; border: 1px solid #333a49; color: #8e96a6; padding: 6px 8px; border-radius: 8px; font-size: 11px; font-weight: 800; }
 .border-picker input:checked + span, .aura-borders input:checked + span { color: #fff; border-color: #71809c; background: #2a3445; }
+.quantity-field { width: 72px; display: grid; gap: 4px; color: #8f97a7; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.quantity-field input { width: 72px; padding: 7px 8px; }
 .position-select { min-width: 128px; }
 
 .aura-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
@@ -141,7 +143,7 @@ button.compact { padding: 7px 12px; }
   .tabs { position: sticky; top: 6px; z-index: 5; backdrop-filter: blur(12px); }
   .tab { flex: 1; padding-inline: 8px; }
   .inventory-row { grid-template-columns: 42px 1fr auto; }
-  .inventory-row .border-picker, .inventory-row .position-select, .inventory-row .lock-check { grid-column: 2 / -1; }
+  .inventory-row .border-picker, .inventory-row .quantity-field, .inventory-row .position-select, .inventory-row .lock-check { grid-column: 2 / -1; }
   .aura-columns { grid-template-columns: 1fr; }
   .aura-row { grid-template-columns: 42px 1fr auto; }
   .aura-row .aura-borders, .aura-row .lock-check { grid-column: 2 / -1; }

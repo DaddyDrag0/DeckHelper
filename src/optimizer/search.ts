@@ -100,16 +100,20 @@ function emitProgress(
   })
 }
 
-function chooseCount(n: number, k: number): number {
-  if (k < 0 || k > n) return 0
-  if (k === 0 || k === n) return 1
-  let result = 1
-  const limit = Math.min(k, n - k)
-  for (let i = 1; i <= limit; i++) {
-    result *= (n - limit + i) / i
-    if (!Number.isFinite(result) || result > Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER
+function boundedChoiceCount(items: Array<{ card: OwnedCard; capacity: number }>, choose: number): number {
+  const dp = new Array(choose + 1).fill(0)
+  dp[0] = 1
+  for (const item of items) {
+    const next = new Array(choose + 1).fill(0)
+    for (let used = 0; used <= choose; used++) {
+      if (!dp[used]) continue
+      for (let take = 0; take <= Math.min(item.capacity, choose - used); take++) {
+        next[used + take] = Math.min(Number.MAX_SAFE_INTEGER, next[used + take] + dp[used])
+      }
+    }
+    for (let index = 0; index <= choose; index++) dp[index] = next[index]
   }
-  return Math.round(result)
+  return dp[choose]
 }
 
 function cardRawScore(card: OwnedCard): number {
@@ -125,8 +129,9 @@ function ownedCardToTeamCard(card: OwnedCard): TeamCard {
 }
 
 function validateInventory(inventory: InventoryState) {
-  const validCards = inventory.cards.filter((card) => CARD_BY_NAME.has(card.cardName))
-  if (validCards.length < 4) throw new Error('Add at least 4 cards to your inventory before searching.')
+  const validCards = inventory.cards.filter((card) => CARD_BY_NAME.has(card.cardName) && card.quantity >= 1)
+  const totalCopies = validCards.reduce((sum, card) => sum + card.quantity, 0)
+  if (totalCopies < 4) throw new Error('Add at least 4 total card copies to your inventory before searching.')
 
   const locked = validCards.filter((card) => card.locked || card.lockedPosition !== null)
   if (locked.length > 4) throw new Error('You can lock at most 4 cards.')
@@ -143,11 +148,14 @@ function validateInventory(inventory: InventoryState) {
 function buildDefaultOrder(names: string[], inventoryMap: Map<string, OwnedCard>): TeamCard[] {
   const slots: Array<TeamCard | null> = [null, null, null, null]
   const remaining: OwnedCard[] = []
+  const positioned = new Set<string>()
   for (const name of names) {
     const owned = inventoryMap.get(name)
     if (!owned) continue
-    if (owned.lockedPosition !== null) slots[owned.lockedPosition] = ownedCardToTeamCard(owned)
-    else remaining.push(owned)
+    if (owned.lockedPosition !== null && !positioned.has(name)) {
+      slots[owned.lockedPosition] = ownedCardToTeamCard(owned)
+      positioned.add(name)
+    } else remaining.push(owned)
   }
   remaining.sort((a, b) => cardRawScore(b) - cardRawScore(a))
   for (let slot = 0; slot < slots.length; slot++) {
@@ -316,91 +324,78 @@ function xorshift(seed: number) {
   }
 }
 
-function enumerateCombinations<T>(items: T[], choose: number, limit: number, callback: (picked: T[]) => void) {
-  if (choose === 0) {
-    callback([])
-    return
-  }
-  const picked: T[] = []
+function enumerateMultisets(
+  items: Array<{ card: OwnedCard; capacity: number }>,
+  choose: number,
+  limit: number,
+  callback: (picked: OwnedCard[]) => void,
+) {
+  const picked: OwnedCard[] = []
   let emitted = 0
-  const walk = (start: number) => {
+  const walk = (index: number, remaining: number) => {
     if (emitted >= limit) return
-    if (picked.length === choose) {
+    if (remaining === 0) {
       emitted += 1
       callback([...picked])
       return
     }
-    const needed = choose - picked.length
-    for (let index = start; index <= items.length - needed && emitted < limit; index++) {
-      picked.push(items[index])
-      walk(index + 1)
-      picked.pop()
+    if (index >= items.length) return
+    const item = items[index]
+    const maxTake = Math.min(item.capacity, remaining)
+    for (let take = maxTake; take >= 0 && emitted < limit; take--) {
+      for (let count = 0; count < take; count++) picked.push(item.card)
+      walk(index + 1, remaining - take)
+      for (let count = 0; count < take; count++) picked.pop()
     }
   }
-  walk(0)
+  walk(0, choose)
 }
 
 function generateTeamNameSets(inventory: InventoryState, cap: number): { sets: string[][]; possible: number } {
   const { validCards, locked } = validateInventory(inventory)
-  const lockedNames = new Set(locked.map((card) => card.cardName))
-  const unlocked = validCards.filter((card) => !lockedNames.has(card.cardName))
+  const reserved = new Map<string, number>()
+  for (const card of locked) reserved.set(card.cardName, 1)
   const need = 4 - locked.length
-  const possible = chooseCount(unlocked.length, need)
+  const selectable = validCards
+    .map((card) => ({ card, capacity: Math.min(4, Math.max(0, card.quantity - (reserved.get(card.cardName) ?? 0))) }))
+    .filter((entry) => entry.capacity > 0)
+  const possible = need === 0 ? 1 : boundedChoiceCount(selectable, need)
   const sets: string[][] = []
   const seen = new Set<string>()
 
   const add = (extras: OwnedCard[]) => {
     if (extras.length !== need) return
     const names = [...locked.map((card) => card.cardName), ...extras.map((card) => card.cardName)]
-    if (new Set(names).size !== 4) return
+    if (names.length !== 4) return
     const key = [...names].sort().join('\u0000')
     if (seen.has(key)) return
     seen.add(key)
     sets.push(names)
   }
 
-  if (need === 0) return { sets: [[...lockedNames]], possible: 1 }
+  if (need === 0) return { sets: [locked.map((card) => card.cardName)], possible: 1 }
+
+  const ranked = [...selectable].sort((a, b) => cardRawScore(b.card) - cardRawScore(a.card))
   if (possible <= cap) {
-    enumerateCombinations(unlocked, need, cap, add)
+    enumerateMultisets(ranked, need, cap, add)
     return { sets, possible }
   }
 
-  const ranked = [...unlocked].sort((a, b) => cardRawScore(b) - cardRawScore(a))
-  const core = ranked.slice(0, Math.min(28, ranked.length))
-  const coreBudget = Math.max(1, Math.floor(cap * 0.6))
-  enumerateCombinations(core, need, coreBudget, add)
+  const eliteBudget = Math.max(1, Math.floor(cap * 0.7))
+  enumerateMultisets(ranked, need, eliteBudget, add)
 
-  const outsiders = ranked.slice(core.length)
-  const support = core.slice(0, Math.max(8, need + 4))
-  for (let outerIndex = 0; outerIndex < outsiders.length && sets.length < cap; outerIndex++) {
-    if (need === 1) {
-      add([outsiders[outerIndex]])
-      continue
-    }
-    const required = need - 1
-    for (let variant = 0; variant < 4 && sets.length < cap; variant++) {
-      const picked: OwnedCard[] = [outsiders[outerIndex]]
-      const used = new Set<string>([outsiders[outerIndex].cardName])
-      for (let offset = 0; offset < support.length && picked.length < need; offset++) {
-        const candidate = support[(outerIndex + variant * 3 + offset) % support.length]
-        if (used.has(candidate.cardName)) continue
-        used.add(candidate.cardName)
-        picked.push(candidate)
-      }
-      if (picked.length === required + 1) add(picked)
-    }
-  }
-
-  const random = xorshift(0xdecafbad ^ validCards.length)
+  const tokenPool = ranked.flatMap((entry) => Array.from({ length: Math.min(entry.capacity, need) }, () => entry.card))
+  const totalCopies = validCards.reduce((sum, card) => sum + card.quantity, 0)
+  const random = xorshift(0xdecafbad ^ totalCopies)
   let attempts = 0
-  while (sets.length < cap && attempts++ < cap * 40) {
+  while (sets.length < cap && attempts++ < cap * 50) {
     const picked: OwnedCard[] = []
     const used = new Set<number>()
-    while (picked.length < need && used.size < unlocked.length) {
-      const index = Math.floor(random() * unlocked.length)
+    while (picked.length < need && used.size < tokenPool.length) {
+      const index = Math.floor(random() * tokenPool.length)
       if (used.has(index)) continue
       used.add(index)
-      picked.push(unlocked[index])
+      picked.push(tokenPool[index])
     }
     add(picked)
   }
@@ -445,10 +440,14 @@ function permutations<T>(values: T[]): T[][] {
 }
 
 function validOrders(cards: TeamCard[], inventoryMap: Map<string, OwnedCard>): TeamCard[][] {
-  return permutations(cards).filter((order) => order.every((card, index) => {
-    const owned = inventoryMap.get(card.cardName)
-    return owned?.lockedPosition === null || owned?.lockedPosition === index
-  }))
+  const lockedPositions = [...inventoryMap.values()].filter((card) => card.lockedPosition !== null)
+  const seen = new Set<string>()
+  return permutations(cards).filter((order) => {
+    const key = order.map((card) => `${card.cardName}:${card.borders.join('+')}`).join('|')
+    if (seen.has(key)) return false
+    seen.add(key)
+    return lockedPositions.every((owned) => order[owned.lockedPosition as number]?.cardName === owned.cardName)
+  })
 }
 
 function probeScore(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number): number {
@@ -660,10 +659,10 @@ export function searchBestTeams(
   return results.sort((a, b) => b.metrics.averageDepth - a.metrics.averageDepth)
 }
 
-function bestOrderForReplacement(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number): TeamLoadout {
+function bestOrderForReplacement(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number, inventoryMap: Map<string, OwnedCard>): TeamLoadout {
   let best = loadout
   let bestScore = Number.NEGATIVE_INFINITY
-  for (const order of permutations(loadout.cards)) {
+  for (const order of validOrders(loadout.cards, inventoryMap)) {
     const candidate = { ...loadout, cards: order }
     const score = probeScore(candidate, center, runtime, maxFloor)
     if (score > bestScore) {
@@ -684,8 +683,16 @@ export function searchReplacements(
   const settings = settingsWithDefaults(settingsInput)
   if (currentLoadout.cards.length !== 4) throw new Error('Build a complete 4-card current deck first.')
   const { validCards } = validateInventory(inventory)
-  const currentNames = new Set(currentLoadout.cards.filter((_, index) => index !== slot).map((card) => card.cardName))
-  const choices = validCards.filter((card) => !currentNames.has(card.cardName) && card.cardName !== currentLoadout.cards[slot]?.cardName)
+  const inventoryMap = new Map(validCards.map((card) => [card.cardName, card] as const))
+  const usedElsewhere = new Map<string, number>()
+  currentLoadout.cards.forEach((card, index) => {
+    if (index === slot) return
+    usedElsewhere.set(card.cardName, (usedElsewhere.get(card.cardName) ?? 0) + 1)
+  })
+  const choices = validCards.filter((card) =>
+    card.cardName !== currentLoadout.cards[slot]?.cardName
+    && (usedElsewhere.get(card.cardName) ?? 0) < card.quantity
+  )
   const runtime: SearchRuntime = {
     simulations: 0,
     possibleCombinations: choices.length,
@@ -706,7 +713,7 @@ export function searchReplacements(
     const card = choices[index]
     const cardsForDeck = currentLoadout.cards.map((existing, existingIndex) => existingIndex === slot ? ownedCardToTeamCard(card) : existing)
     const base: TeamLoadout = { ...currentLoadout, cards: cardsForDeck }
-    const ordered = bestOrderForReplacement(base, baseline.medianDepth, runtime, settings.maxFloor)
+    const ordered = bestOrderForReplacement(base, baseline.medianDepth, runtime, settings.maxFloor, inventoryMap)
     const threshold = estimateThreshold(ordered, COMMON_SEEDS.slice(0, 3), runtime, settings.maxFloor, baseline.medianDepth, 3)
     quick.push({ card, loadout: ordered, estimate: threshold.estimate })
     runtime.quickTested = index + 1
