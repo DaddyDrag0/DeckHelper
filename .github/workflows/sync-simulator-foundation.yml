@@ -1,0 +1,161 @@
+name: Sync simulator foundation
+
+on:
+  push:
+    branches:
+      - agent/simulator-foundation
+    paths:
+      - .github/workflows/sync-simulator-foundation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout DeckHelper
+        uses: actions/checkout@v4
+        with:
+          ref: agent/simulator-foundation
+          fetch-depth: 0
+
+      - name: Checkout pinned Depths simulator source
+        uses: actions/checkout@v4
+        with:
+          repository: DaddyDrag0/CardRngExpansionDepths
+          ref: 1129767ec3b38d681332e1f3110b7c88ab69c63b
+          path: .source-depths
+
+      - name: Copy simulator, data, workers, and regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf src/engine src/data
+          mkdir -p src scripts
+          cp -R .source-depths/src/engine src/engine
+          cp -R .source-depths/src/data src/data
+          cp .source-depths/src/types.ts src/types.ts
+          cp .source-depths/src/browser-worker.ts src/browser-worker.ts
+          cp .source-depths/src/tower-worker.ts src/tower-worker.ts
+          cp .source-depths/src/vite-env.d.ts src/vite-env.d.ts
+
+          for file in \
+            data-integrity.ts \
+            engine-smoke.ts \
+            stall-regression.ts \
+            ability-trace-regression.ts \
+            announcement-balance-regression.ts \
+            anubis-regression.ts \
+            combat-corrections-regression.ts \
+            insatiable-unholy-regression.ts \
+            order-cosmos-regression.ts \
+            revive-grinch-regression.ts \
+            depths-regression.ts \
+            depths-rewards-regression.ts \
+            depths-time-regression.ts \
+            watchdog-heartbeat-regression.ts \
+            player-coverage.ts
+          do
+            cp ".source-depths/scripts/$file" "scripts/$file"
+          done
+
+          cp .source-depths/package-lock.json package-lock.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs'
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'))
+          lock.name = 'card-rng-expansion-deck-helper'
+          if (lock.packages?.['']) lock.packages[''].name = 'card-rng-expansion-deck-helper'
+          fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2) + '\n')
+          NODE
+
+      - name: Verify byte-for-byte source parity and write manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import crypto from 'node:crypto'
+          import fs from 'node:fs'
+          import path from 'node:path'
+
+          const sourceRepository = 'DaddyDrag0/CardRngExpansionDepths'
+          const sourceCommit = '1129767ec3b38d681332e1f3110b7c88ab69c63b'
+          const directFiles = [
+            'src/types.ts',
+            'src/browser-worker.ts',
+            'src/tower-worker.ts',
+            'src/vite-env.d.ts',
+            'scripts/data-integrity.ts',
+            'scripts/engine-smoke.ts',
+            'scripts/stall-regression.ts',
+            'scripts/ability-trace-regression.ts',
+            'scripts/announcement-balance-regression.ts',
+            'scripts/anubis-regression.ts',
+            'scripts/combat-corrections-regression.ts',
+            'scripts/insatiable-unholy-regression.ts',
+            'scripts/order-cosmos-regression.ts',
+            'scripts/revive-grinch-regression.ts',
+            'scripts/depths-regression.ts',
+            'scripts/depths-rewards-regression.ts',
+            'scripts/depths-time-regression.ts',
+            'scripts/watchdog-heartbeat-regression.ts',
+            'scripts/player-coverage.ts',
+          ]
+
+          function walk(dir) {
+            return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+              const full = path.join(dir, entry.name)
+              return entry.isDirectory() ? walk(full) : [full.replaceAll('\\', '/')]
+            })
+          }
+
+          const files = [...walk('src/engine'), ...walk('src/data'), ...directFiles].sort()
+          const hashes = {}
+          const mismatches = []
+
+          for (const file of files) {
+            const sourceFile = path.join('.source-depths', file)
+            const target = fs.readFileSync(file)
+            const source = fs.readFileSync(sourceFile)
+            const targetHash = crypto.createHash('sha256').update(target).digest('hex')
+            const sourceHash = crypto.createHash('sha256').update(source).digest('hex')
+            hashes[file] = sourceHash
+            if (targetHash !== sourceHash) mismatches.push(file)
+          }
+
+          if (mismatches.length) {
+            console.error('Copied simulator differs from pinned source:')
+            for (const file of mismatches) console.error(`- ${file}`)
+            process.exit(1)
+          }
+
+          fs.writeFileSync('engine-source-manifest.json', JSON.stringify({
+            sourceRepository,
+            sourceCommit,
+            generatedAt: new Date().toISOString(),
+            files: hashes,
+          }, null, 2) + '\n')
+
+          console.log(`Verified ${files.length} files byte-for-byte against ${sourceRepository}@${sourceCommit}.`)
+          NODE
+
+      - name: Install pinned dependencies
+        run: npm ci
+
+      - name: Build and run copied regression suite
+        run: npm run check
+
+      - name: Commit copied simulator snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/engine src/data src/types.ts src/browser-worker.ts src/tower-worker.ts src/vite-env.d.ts scripts package-lock.json engine-source-manifest.json
+          if git diff --cached --quiet; then
+            echo "Simulator snapshot already synchronized."
+            exit 0
+          fi
+          git commit -m "Copy tested Depths simulator foundation"
+          git push origin HEAD:agent/simulator-foundation
