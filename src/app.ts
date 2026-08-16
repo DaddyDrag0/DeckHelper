@@ -244,7 +244,7 @@ export class DeckHelperApp {
         <div class="pool-card-info">
           <strong>${escapeHtml(card.name)}</strong>
           <span>${escapeHtml(card.ability || 'No ability')}</span>
-          <small>${escapeHtml(borderLabel(borders))} · 1/${formatCompact(effectiveRarity)}</small>
+          <small>1/${formatCompact(effectiveRarity)}</small>
         </div>
         <div class="pool-border-picker" title="Choose the exact borders before dragging">
           ${CARD_BORDERS.map((border) => `<label class="pool-border-${border.toLowerCase()}"><input type="checkbox" data-action="pool-border" data-name="${escapeHtml(card.name)}" data-border="${border}" ${borders.includes(border) ? 'checked' : ''}><span>${border[0]}</span></label>`).join('')}

@@ -81,7 +81,7 @@
         <div class="pool-card-info">
           <strong>${I(e.name)}</strong>
           <span>${I(e.ability||`No ability`)}</span>
-          <small>${I(V(t))} · 1/${R(i)}</small>
+          <small>1/${R(i)}</small>
         </div>
         <div class="pool-border-picker" title="Choose the exact borders before dragging">
           ${H.map(n=>`<label class="pool-border-${n.toLowerCase()}"><input type="checkbox" data-action="pool-border" data-name="${I(e.name)}" data-border="${n}" ${t.includes(n)?`checked`:``}><span>${n[0]}</span></label>`).join(``)}
