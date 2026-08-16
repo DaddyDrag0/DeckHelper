@@ -12,7 +12,7 @@ import type {
   TeamMetrics,
   WorkerOutbound,
 } from './app-types'
-import type { AuraSelection, BorderName, TeamCard, TeamLoadout } from './types'
+import type { AuraBorderName, AuraSelection, BorderName, TeamCard, TeamLoadout } from './types'
 import { exportInventoryCode, importInventoryCode, loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
 import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
@@ -30,6 +30,7 @@ export class DeckHelperApp {
   private cardSearch = ''
   private poolSearch = ''
   private poolBorders = new Map<string, BorderName[]>()
+  private auraBorderDraft = new Map<string, AuraOwnedBorder>()
   private auraSearch = ''
   private inventoryCodeText = ''
   private inventoryCodeStatus = ''
@@ -179,16 +180,23 @@ export class DeckHelperApp {
       <div class="inventory-variant-list">
         ${variants.length ? variants.map((owned) => this.renderInventoryCard(owned)).join('') : `<div class="inventory-empty">${this.state.inventory.cards.length ? 'No variants match this search.' : 'Add your first card above.'}</div>`}
       </div>
-      <details class="aura-drawer">
-        <summary>Auras <b>${this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length}</b></summary>
-        <div class="aura-drawer-body">
-          <label class="inventory-search"><span>Search auras</span><input id="aura-search" value="${escapeHtml(this.auraSearch)}" placeholder="Aura name or skill"></label>
-          <div class="aura-columns">
-            <div><h3>Stat</h3>${filteredAuras.filter((aura) => aura.type === 'Stat').map((aura) => this.renderInventoryAura(aura.name, 'stat')).join('')}</div>
-            <div><h3>Ability</h3>${filteredAuras.filter((aura) => aura.type === 'Skill').map((aura) => this.renderInventoryAura(aura.name, 'ability')).join('')}</div>
+      <section class="aura-inventory-panel">
+        <div class="aura-inventory-head">
+          <div><span class="eyebrow">Aura Inventory</span><h3>Owned Auras</h3></div>
+          <span>Each aura uses exactly one border: Base, Platinum, Crystal, or Galaxy. Aura borders never stack.</span>
+        </div>
+        <label class="inventory-search"><span>Search auras</span><input id="aura-search" value="${escapeHtml(this.auraSearch)}" placeholder="Aura name or skill"></label>
+        <div class="aura-columns">
+          <div class="aura-column">
+            <div class="aura-column-head"><strong>Stat Auras</strong><span>${this.state.inventory.statAuras.length} owned</span></div>
+            ${filteredAuras.filter((aura) => aura.type === 'Stat').map((aura) => this.renderInventoryAura(aura.name, 'stat')).join('')}
+          </div>
+          <div class="aura-column">
+            <div class="aura-column-head"><strong>Ability Auras</strong><span>${this.state.inventory.abilityAuras.length} owned</span></div>
+            ${filteredAuras.filter((aura) => aura.type === 'Skill').map((aura) => this.renderInventoryAura(aura.name, 'ability')).join('')}
           </div>
         </div>
-      </details>
+      </section>
     `
   }
 
@@ -292,17 +300,22 @@ export class DeckHelperApp {
     const ownedList = type === 'stat' ? this.state.inventory.statAuras : this.state.inventory.abilityAuras
     const owned = ownedList.find((aura) => aura.auraName === name)
     const image = thumbnail(definition.imageAssetId)
+    const draftKey = `${type}:${name}`
+    const selectedBorder = owned?.borders[0] ?? this.auraBorderDraft.get(draftKey) ?? 'Base'
     return `
-      <article class="aura-row ${owned ? 'owned' : ''}">
+      <article class="aura-catalog-row ${owned ? 'owned' : ''}">
         <div class="thumb small">${image ? `<img src="${escapeHtml(image)}" alt="">` : '<span>?</span>'}</div>
-        <div class="item-main"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(definition.skillName || definition.type || '')}</small></div>
-        ${owned ? `
-          <div class="aura-borders">
-            ${AURA_BORDERS.map((border) => `<label><input type="checkbox" data-action="aura-border" data-kind="${type}" data-name="${escapeHtml(name)}" data-border="${border}" ${owned.borders.includes(border) ? 'checked' : ''}><span>${border}</span></label>`).join('')}
+        <div class="aura-catalog-main">
+          <div class="item-main"><strong>${escapeHtml(name)}</strong><small>${escapeHtml(definition.skillName || definition.type || '')}</small></div>
+          <div class="aura-single-border" aria-label="Aura border">
+            ${AURA_BORDERS.map((border) => `<button type="button" class="aura-border-choice ${selectedBorder === border ? 'active' : ''}" data-action="aura-border-choice" data-kind="${type}" data-name="${escapeHtml(name)}" data-border="${border}" title="${border === 'Base' ? 'No aura border' : border}">${border === 'Base' ? 'Base' : border[0]}</button>`).join('')}
           </div>
-          <label class="lock-check"><input type="checkbox" data-action="aura-lock" data-kind="${type}" data-name="${escapeHtml(name)}" ${owned.locked ? 'checked' : ''}> Lock</label>
-          <button class="danger subtle" data-action="remove-aura" data-kind="${type}" data-name="${escapeHtml(name)}">Remove</button>
-        ` : `<button class="primary compact" data-action="add-aura" data-kind="${type}" data-name="${escapeHtml(name)}">Add</button>`}
+          <div class="aura-catalog-actions">
+            ${owned
+              ? `<span class="aura-owned-pill">Owned · ${escapeHtml(selectedBorder)}</span><label class="lock-check"><input type="checkbox" data-action="aura-lock" data-kind="${type}" data-name="${escapeHtml(name)}" ${owned.locked ? 'checked' : ''}> Lock</label><button class="danger subtle" data-action="remove-aura" data-kind="${type}" data-name="${escapeHtml(name)}">Remove</button>`
+              : `<span class="aura-draft-label">Add as ${escapeHtml(selectedBorder)}</span><button class="primary compact" data-action="add-aura" data-kind="${type}" data-name="${escapeHtml(name)}" data-border="${selectedBorder}">Add Aura</button>`}
+          </div>
+        </div>
       </article>
     `
   }
@@ -433,7 +446,10 @@ export class DeckHelperApp {
 
   private renderAuraSelect(kind: 'stat' | 'ability', current?: AuraSelection | null) {
     const source = kind === 'stat' ? this.state.inventory.statAuras : this.state.inventory.abilityAuras
-    const options = source.flatMap((aura) => aura.borders.map((border) => ({ auraName: aura.auraName, border: border === 'Base' ? null : border })))
+    const options = source.map((aura) => {
+      const border = aura.borders[0] ?? 'Base'
+      return { auraName: aura.auraName, border: border === 'Base' ? null : border as AuraBorderName }
+    })
     const currentValue = current ? this.encodeAura(current) : ''
     return `<select data-action="deck-aura" data-kind="${kind}"><option value="">None</option>${options.map((option) => {
       const value = this.encodeAura(option)
@@ -497,7 +513,6 @@ export class DeckHelperApp {
     if (action === 'card-quantity' && target instanceof HTMLInputElement) this.setCardQuantity(target.dataset.key || '', target.value)
     if (action === 'card-lock' && target instanceof HTMLInputElement) this.toggleCardLock(target.dataset.key || '', target.checked)
     if (action === 'card-position' && target instanceof HTMLSelectElement) this.setCardPosition(target.dataset.key || '', target.value)
-    if (action === 'aura-border' && target instanceof HTMLInputElement) this.toggleAuraBorder(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder, target.checked)
     if (action === 'aura-lock' && target instanceof HTMLInputElement) this.toggleAuraLock(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.checked)
     if (action === 'deck-aura' && target instanceof HTMLSelectElement) this.setDeckAura(target.dataset.kind as 'stat' | 'ability', this.decodeAura(target.value))
   }
@@ -524,7 +539,8 @@ export class DeckHelperApp {
     else if (action === 'add-card') this.addCard(target.dataset.name || '')
     else if (action === 'remove-card') this.removeCard(target.dataset.key || '')
     else if (action === 'deck-clear') this.setDeckCard(Number(target.dataset.slot) as DeckSlot, '')
-    else if (action === 'add-aura') this.addAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
+    else if (action === 'aura-border-choice') this.chooseAuraBorder(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder)
+    else if (action === 'add-aura') this.addAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder)
     else if (action === 'remove-aura') this.removeAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
     else if (action === 'start-search') this.startSearch()
     else if (action === 'cancel-search') this.cancelWorker()
@@ -697,10 +713,12 @@ export class DeckHelperApp {
     return kind === 'stat' ? this.state.inventory.statAuras : this.state.inventory.abilityAuras
   }
 
-  private addAura(kind: 'stat' | 'ability', name: string) {
+  private addAura(kind: 'stat' | 'ability', name: string, border: AuraOwnedBorder = 'Base') {
     const list = this.auraList(kind)
     if (!name || list.some((aura) => aura.auraName === name)) return
-    list.push({ auraName: name, borders: ['Base'], locked: false })
+    const selectedBorder = AURA_BORDERS.includes(border) ? border : 'Base'
+    list.push({ auraName: name, borders: [selectedBorder], locked: false })
+    this.auraBorderDraft.delete(`${kind}:${name}`)
     this.persist(); this.render()
   }
 
@@ -710,11 +728,18 @@ export class DeckHelperApp {
     this.persist(); this.render()
   }
 
-  private toggleAuraBorder(kind: 'stat' | 'ability', name: string, border: AuraOwnedBorder, checked: boolean) {
+  private chooseAuraBorder(kind: 'stat' | 'ability', name: string, border: AuraOwnedBorder) {
+    if (!name || !AURA_BORDERS.includes(border)) return
     const aura = this.auraList(kind).find((entry) => entry.auraName === name)
-    if (!aura || !AURA_BORDERS.includes(border)) return
-    aura.borders = checked ? [...new Set([...aura.borders, border])] : aura.borders.filter((value) => value !== border)
-    if (!aura.borders.length) aura.borders = ['Base']
+    if (!aura) {
+      this.auraBorderDraft.set(`${kind}:${name}`, border)
+      this.render()
+      return
+    }
+    aura.borders = [border]
+    const selection: AuraSelection = { auraName: name, border: border === 'Base' ? null : border as AuraBorderName }
+    if (kind === 'stat' && this.state.currentDeck.statAura?.auraName === name) this.state.currentDeck.statAura = selection
+    if (kind === 'ability' && this.state.currentDeck.abilityAura?.auraName === name) this.state.currentDeck.abilityAura = selection
     this.persist(); this.render()
   }
 

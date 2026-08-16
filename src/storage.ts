@@ -46,9 +46,10 @@ function cleanAura(value: unknown): OwnedAura | null {
   const borders = Array.isArray(raw.borders)
     ? raw.borders.filter((border): border is AuraOwnedBorder => AURA_BORDERS.includes(border as AuraOwnedBorder))
     : []
+  const border = [...AURA_BORDERS].reverse().find((candidate) => borders.includes(candidate)) ?? 'Base'
   return {
     auraName: raw.auraName,
-    borders: [...new Set(borders.length ? borders : ['Base' as AuraOwnedBorder])],
+    borders: [border],
     locked: Boolean(raw.locked),
   }
 }
