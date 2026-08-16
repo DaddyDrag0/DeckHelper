@@ -5,6 +5,7 @@ import { cardVariantKey, canonicalBorders } from './card-variants'
 const STORAGE_KEY = 'deckhelper.state.v1'
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
+const INVENTORY_CODE_PREFIX = 'DHINV1:'
 
 const EMPTY_LOADOUT: TeamLoadout = { cards: [], statAura: null, abilityAura: null }
 
@@ -75,6 +76,43 @@ function cleanInventory(value: unknown): InventoryState {
     cards: [...variants.values()],
     statAuras: dedupeBy(statAuras, (aura) => aura.auraName),
     abilityAuras: dedupeBy(abilityAuras, (aura) => aura.auraName),
+  }
+}
+
+function encodeBase64Url(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, Math.min(bytes.length, index + 0x8000)))
+  }
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+function decodeBase64Url(value: string): string {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4)
+  const binary = atob(padded)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+export function exportInventoryCode(inventory: InventoryState): string {
+  const payload = { version: 1, inventory: cleanInventory(inventory) }
+  return INVENTORY_CODE_PREFIX + encodeBase64Url(JSON.stringify(payload))
+}
+
+export function importInventoryCode(code: string): InventoryState {
+  const trimmed = code.trim()
+  if (!trimmed.startsWith(INVENTORY_CODE_PREFIX)) throw new Error('That is not a DeckHelper inventory code.')
+  try {
+    const decoded = decodeBase64Url(trimmed.slice(INVENTORY_CODE_PREFIX.length))
+    const payload = JSON.parse(decoded) as { version?: unknown; inventory?: unknown }
+    if (payload.version !== 1) throw new Error('Unsupported inventory code version.')
+    if (!payload.inventory || typeof payload.inventory !== 'object') throw new Error('Inventory data is missing.')
+    return cleanInventory(payload.inventory)
+  } catch (error) {
+    if (error instanceof Error && (error.message === 'Unsupported inventory code version.' || error.message === 'Inventory data is missing.')) throw error
+    throw new Error('That inventory code is damaged or incomplete.')
   }
 }
 

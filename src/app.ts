@@ -13,7 +13,7 @@ import type {
   WorkerOutbound,
 } from './app-types'
 import type { AuraSelection, BorderName, TeamCard, TeamLoadout } from './types'
-import { loadState, makeFavorite, saveState } from './storage'
+import { exportInventoryCode, importInventoryCode, loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
 import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
 
@@ -31,6 +31,8 @@ export class DeckHelperApp {
   private poolSearch = ''
   private poolBorders = new Map<string, BorderName[]>()
   private auraSearch = ''
+  private inventoryCodeText = ''
+  private inventoryCodeStatus = ''
   private worker: Worker | null = null
   private progress: OptimizerProgress | null = null
   private results: RankedTeam[] = []
@@ -160,6 +162,19 @@ export class DeckHelperApp {
         <p>Drag cards from Pool into this panel. Each exact border combination is stored separately; dropping the same variant again increases its quantity.</p>
         <div class="inventory-drop-hint">Drop Pool cards anywhere in this panel</div>
       </div>
+      <details class="inventory-code-panel">
+        <summary>Inventory Code <span>backup / transfer</span></summary>
+        <div class="inventory-code-body">
+          <p>Copy this code somewhere safe, or paste a saved code below. Loading replaces Your Inventory only; saved decks are kept.</p>
+          <textarea id="inventory-code-input" spellcheck="false" placeholder="DHINV1:...">${escapeHtml(this.inventoryCodeText)}</textarea>
+          <div class="inventory-code-actions">
+            <button class="primary" data-action="inventory-code-export">Copy Current Inventory</button>
+            <button data-action="inventory-code-load" ${this.inventoryCodeText.trim() ? '' : 'disabled'}>Load Code</button>
+            <button class="subtle" data-action="inventory-code-clear" ${this.inventoryCodeText ? '' : 'disabled'}>Clear</button>
+          </div>
+          ${this.inventoryCodeStatus ? `<small class="inventory-code-status">${escapeHtml(this.inventoryCodeStatus)}</small>` : ''}
+        </div>
+      </details>
       <label class="inventory-search"><span>Search inventory</span><input id="card-search" value="${escapeHtml(this.cardSearch)}" placeholder="Name, ability, or border"></label>
       <div class="inventory-variant-list">
         ${variants.length ? variants.map((owned) => this.renderInventoryCard(owned)).join('') : `<div class="inventory-empty">${this.state.inventory.cards.length ? 'No variants match this search.' : 'Add your first card above.'}</div>`}
@@ -467,6 +482,9 @@ export class DeckHelperApp {
     } else if (target.id === 'aura-search') {
       this.auraSearch = target.value
       this.renderAndRefocus('aura-search')
+    } else if (target.id === 'inventory-code-input') {
+      this.inventoryCodeText = target.value
+      this.inventoryCodeStatus = ''
     }
   }
 
@@ -493,6 +511,14 @@ export class DeckHelperApp {
       this.render()
     } else if (action === 'clear-error') {
       this.error = ''
+      this.render()
+    } else if (action === 'inventory-code-export') {
+      void this.copyInventoryCode()
+    } else if (action === 'inventory-code-load') {
+      this.loadInventoryCode()
+    } else if (action === 'inventory-code-clear') {
+      this.inventoryCodeText = ''
+      this.inventoryCodeStatus = ''
       this.render()
     } else if (action === 'pool-add-selected') this.addOwnedVariant(target.dataset.name || '', this.poolBordersFor(target.dataset.name || ''))
     else if (action === 'add-card') this.addCard(target.dataset.name || '')
@@ -553,6 +579,41 @@ export class DeckHelperApp {
     if (input) {
       input.focus()
       input.setSelectionRange(valueLength, valueLength)
+    }
+  }
+
+  private async copyInventoryCode() {
+    const code = exportInventoryCode(this.state.inventory)
+    this.inventoryCodeText = code
+    this.inventoryCodeStatus = 'Inventory code generated. Copy it somewhere safe.'
+    this.render()
+    try {
+      await navigator.clipboard.writeText(code)
+      this.inventoryCodeStatus = 'Copied to clipboard.'
+      this.render()
+    } catch {
+      const textarea = document.getElementById('inventory-code-input') as HTMLTextAreaElement | null
+      textarea?.focus()
+      textarea?.select()
+    }
+  }
+
+  private loadInventoryCode() {
+    try {
+      const inventory = importInventoryCode(this.inventoryCodeText)
+      this.state.inventory = inventory
+      this.results = []
+      this.replacementResults = []
+      this.replacementBaseline = null
+      this.replacementSlot = null
+      this.error = ''
+      const copies = inventory.cards.reduce((sum, card) => sum + card.quantity, 0)
+      this.inventoryCodeStatus = `Loaded ${copies} card ${copies === 1 ? 'copy' : 'copies'} across ${inventory.cards.length} exact variants.`
+      this.persist()
+      this.render()
+    } catch (error) {
+      this.inventoryCodeStatus = error instanceof Error ? error.message : 'Could not load that inventory code.'
+      this.render()
     }
   }
 
