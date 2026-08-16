@@ -56,6 +56,7 @@ export interface RankedTeam {
 
 export interface ReplacementResult {
   cardName: string
+  borders: BorderName[]
   loadout: TeamLoadout
   metrics: TeamMetrics
   medianDelta: number

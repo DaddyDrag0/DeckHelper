@@ -1,5 +1,6 @@
 import type { AppState, AuraOwnedBorder, DeckSlot, InventoryState, OwnedAura, OwnedCard, SavedDeck } from './app-types'
 import type { AuraBorderName, BorderName, TeamLoadout } from './types'
+import { cardVariantKey, canonicalBorders } from './card-variants'
 
 const STORAGE_KEY = 'deckhelper.state.v1'
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
@@ -31,7 +32,7 @@ function cleanCard(value: unknown): OwnedCard | null {
   return {
     cardName: raw.cardName,
     quantity,
-    borders: [...new Set(borders)],
+    borders: canonicalBorders(borders),
     locked: Boolean(raw.locked || position !== null),
     lockedPosition: position,
   }
@@ -54,11 +55,24 @@ function cleanAura(value: unknown): OwnedAura | null {
 function cleanInventory(value: unknown): InventoryState {
   if (!value || typeof value !== 'object') return { cards: [], statAuras: [], abilityAuras: [] }
   const raw = value as Partial<InventoryState>
-  const cards = Array.isArray(raw.cards) ? raw.cards.map(cleanCard).filter((card): card is OwnedCard => Boolean(card)) : []
+  const cleanedCards = Array.isArray(raw.cards) ? raw.cards.map(cleanCard).filter((card): card is OwnedCard => Boolean(card)) : []
+  const variants = new Map<string, OwnedCard>()
+  for (const card of cleanedCards) {
+    const key = cardVariantKey(card.cardName, card.borders)
+    const existing = variants.get(key)
+    if (!existing) {
+      variants.set(key, { ...card, borders: canonicalBorders(card.borders) })
+      continue
+    }
+    existing.quantity = Math.min(999, existing.quantity + card.quantity)
+    existing.locked = existing.locked || card.locked
+    if (existing.lockedPosition === null) existing.lockedPosition = card.lockedPosition
+    else if (card.lockedPosition !== null && existing.lockedPosition !== card.lockedPosition) existing.lockedPosition = null
+  }
   const statAuras = Array.isArray(raw.statAuras) ? raw.statAuras.map(cleanAura).filter((aura): aura is OwnedAura => Boolean(aura)) : []
   const abilityAuras = Array.isArray(raw.abilityAuras) ? raw.abilityAuras.map(cleanAura).filter((aura): aura is OwnedAura => Boolean(aura)) : []
   return {
-    cards: dedupeBy(cards, (card) => card.cardName),
+    cards: [...variants.values()],
     statAuras: dedupeBy(statAuras, (aura) => aura.auraName),
     abilityAuras: dedupeBy(abilityAuras, (aura) => aura.auraName),
   }
@@ -85,7 +99,7 @@ function cleanLoadout(value: unknown): TeamLoadout {
         const borders = Array.isArray(candidate.borders)
           ? candidate.borders.filter((border): border is BorderName => CARD_BORDERS.includes(border as BorderName))
           : []
-        return [{ cardName: candidate.cardName, borders: [...new Set(borders)] }]
+        return [{ cardName: candidate.cardName, borders: canonicalBorders(borders) }]
       })
     : []
   return {
