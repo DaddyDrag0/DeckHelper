@@ -15,8 +15,7 @@ import type {
 import type { AuraSelection, BorderName, TeamCard, TeamLoadout } from './types'
 import { loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
-import { ALL_CARD_BORDER_VARIANTS, borderKey, bordersFromKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
-import { scanInventoryScreenshot, type InventoryScanResult } from './importer'
+import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
@@ -38,11 +37,6 @@ export class DeckHelperApp {
   private replacementBaseline: TeamMetrics | null = null
   private replacementSlot: DeckSlot | null = null
   private error = ''
-  private scanOpen = false
-  private scanBusy = false
-  private scanProgressText = ''
-  private scanResults: InventoryScanResult[] = []
-  private scanError = ''
 
   constructor(private root: HTMLElement) {
     this.syncCurrentDeck()
@@ -105,7 +99,6 @@ export class DeckHelperApp {
         </nav>
         ${this.error ? `<div class="error-banner">${escapeHtml(this.error)}<button data-action="clear-error">×</button></div>` : ''}
         <main>${this.tab === 'inventory' ? this.renderInventory() : this.tab === 'optimize' ? this.renderOptimize() : this.renderDecks()}</main>
-        ${this.scanOpen ? this.renderScanModal() : ''}
       </div>
     `
   }
@@ -131,11 +124,7 @@ export class DeckHelperApp {
 
     return `
       <section class="page-head split">
-        <div><h2>Inventory</h2><p>Each exact border combination is stored separately, so the same card can have multiple owned variants.</p></div>
-        <div class="actions">
-          <button class="primary" data-action="open-import">Import Screenshot</button>
-          <input id="inventory-import-file" type="file" accept="image/png,image/jpeg,image/webp" hidden>
-        </div>
+        <div><h2>Inventory</h2><p>Each exact border combination is stored separately, so the same card can have multiple owned variants. Add cards and quantities manually.</p></div>
       </section>
       <section class="panel inventory-panel">
         <div class="toolbar">
@@ -419,12 +408,6 @@ export class DeckHelperApp {
     const target = event.target
     if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement)) return
     const action = target.dataset.action
-    if (target.id === 'inventory-import-file' && target instanceof HTMLInputElement) {
-      const file = target.files?.[0]
-      target.value = ''
-      if (file) void this.startInventoryScan(file)
-      return
-    }
     if (target.id === 'owned-only' && target instanceof HTMLInputElement) {
       this.ownedOnly = target.checked
       this.render()
@@ -434,9 +417,6 @@ export class DeckHelperApp {
     if (action === 'card-quantity' && target instanceof HTMLInputElement) this.setCardQuantity(target.dataset.key || '', target.value)
     if (action === 'card-lock' && target instanceof HTMLInputElement) this.toggleCardLock(target.dataset.key || '', target.checked)
     if (action === 'card-position' && target instanceof HTMLSelectElement) this.setCardPosition(target.dataset.key || '', target.value)
-    if (action === 'scan-card' && target instanceof HTMLSelectElement) { const result = this.scanResults[Number(target.dataset.index)]; if (result) result.cardName = target.value }
-    if (action === 'scan-border' && target instanceof HTMLSelectElement) { const result = this.scanResults[Number(target.dataset.index)]; if (result) result.borders = bordersFromKey(target.value) }
-    if (action === 'scan-quantity' && target instanceof HTMLInputElement) { const result = this.scanResults[Number(target.dataset.index)]; if (result) result.quantity = Math.max(1, Math.min(999, Math.floor(Number(target.value) || 1))) }
     if (action === 'aura-border' && target instanceof HTMLInputElement) this.toggleAuraBorder(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder, target.checked)
     if (action === 'aura-lock' && target instanceof HTMLInputElement) this.toggleAuraLock(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.checked)
     if (action === 'deck-card' && target instanceof HTMLSelectElement) this.setDeckCard(Number(target.dataset.slot) as DeckSlot, target.value)
@@ -453,11 +433,7 @@ export class DeckHelperApp {
     } else if (action === 'clear-error') {
       this.error = ''
       this.render()
-    } else if (action === 'open-import') (document.getElementById('inventory-import-file') as HTMLInputElement | null)?.click()
-    else if (action === 'scan-close') { if (!this.scanBusy) { this.scanOpen = false; this.render() } }
-    else if (action === 'scan-add') this.applyScanResults(false)
-    else if (action === 'scan-replace') this.applyScanResults(true)
-    else if (action === 'add-card') this.addCard(target.dataset.name || '')
+    } else if (action === 'add-card') this.addCard(target.dataset.name || '')
     else if (action === 'remove-card') this.removeCard(target.dataset.key || '')
     else if (action === 'add-aura') this.addAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
     else if (action === 'remove-aura') this.removeAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
@@ -613,81 +589,6 @@ export class DeckHelperApp {
     }
     this.state.currentDeck.cards = next.filter((card) => card.cardName).slice(0, 4)
     this.persist(); this.render()
-  }
-
-  private renderScanModal() {
-    const cardOptions = cards.filter((card) => card.rarity > 0).map((card) => card.name)
-    return `
-      <div class="scan-backdrop">
-        <section class="scan-modal panel" role="dialog" aria-modal="true">
-          <header class="scan-head">
-            <div><div class="eyebrow">Expansion Screenshot Import</div><h2>Review detected variants</h2><p>Card art, displayed rarity and the game's real border gradients are combined. Same-name variants stay separate.</p></div>
-            <button data-action="scan-close" ${this.scanBusy ? 'disabled' : ''}>×</button>
-          </header>
-          ${this.scanBusy ? `<div class="scan-loading"><span class="spinner"></span><strong data-scan-progress>${escapeHtml(this.scanProgressText || 'Reading screenshot…')}</strong><small>The first scan may take longer while card references and OCR load.</small></div>` : ''}
-          ${this.scanError ? `<div class="scan-error">${escapeHtml(this.scanError)}</div>` : ''}
-          ${!this.scanBusy && this.scanResults.length ? `<div class="scan-results">${this.scanResults.map((result, index) => `
-            <article class="scan-result ${result.confidence < 65 ? 'needs-review' : ''}">
-              <img src="${result.preview}" alt="Detected card ${index + 1}">
-              <div class="scan-fields">
-                <label><span>Card</span><select data-action="scan-card" data-index="${index}">${cardOptions.map((name) => `<option value="${escapeHtml(name)}" ${name === result.cardName ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label>
-                <label><span>Exact borders</span><select data-action="scan-border" data-index="${index}">${ALL_CARD_BORDER_VARIANTS.map((variant) => `<option value="${escapeHtml(variant.key)}" ${variant.key === borderKey(result.borders) ? 'selected' : ''}>${escapeHtml(variant.label)}</option>`).join('')}</select></label>
-                <label class="scan-qty"><span>Copies</span><input type="number" min="1" max="999" value="${result.quantity}" data-action="scan-quantity" data-index="${index}"></label>
-              </div>
-              <div class="scan-meta"><strong>${result.confidence}% confidence</strong><span>${escapeHtml(result.displayedRarity ? `Read ${result.displayedRarity}` : 'Rarity OCR unavailable')}</span><small>${escapeHtml(result.method)}</small>${result.alternatives.length ? `<small>Other art matches: ${escapeHtml(result.alternatives.join(', '))}</small>` : ''}</div>
-            </article>
-          `).join('')}</div>` : ''}
-          <footer class="scan-actions">
-            <button data-action="scan-close" ${this.scanBusy ? 'disabled' : ''}>Cancel</button>
-            <button data-action="scan-add" ${this.scanBusy || !this.scanResults.length ? 'disabled' : ''}>Add to Inventory</button>
-            <button class="primary" data-action="scan-replace" ${this.scanBusy || !this.scanResults.length ? 'disabled' : ''}>Replace Card Inventory</button>
-          </footer>
-        </section>
-      </div>
-    `
-  }
-
-  private async startInventoryScan(file: File) {
-    this.scanOpen = true
-    this.scanBusy = true
-    this.scanError = ''
-    this.scanResults = []
-    this.scanProgressText = 'Finding the inventory grid…'
-    this.render()
-    try {
-      this.scanResults = await scanInventoryScreenshot(file, (progress) => {
-        this.scanProgressText = progress.message
-        const node = this.root.querySelector<HTMLElement>('[data-scan-progress]')
-        if (node) node.textContent = progress.message
-      })
-    } catch (error) {
-      this.scanError = error instanceof Error ? error.message : 'The screenshot could not be imported.'
-    } finally {
-      this.scanBusy = false
-      this.render()
-    }
-  }
-
-  private applyScanResults(replaceCards: boolean) {
-    if (this.scanBusy || !this.scanResults.length) return
-    const variants = new Map<string, OwnedCard>()
-    if (!replaceCards) {
-      for (const card of this.state.inventory.cards) variants.set(cardVariantKey(card.cardName, card.borders), { ...card, borders: canonicalBorders(card.borders) })
-    }
-    for (const result of this.scanResults) {
-      if (!cards.some((card) => card.name === result.cardName)) continue
-      const borders = canonicalBorders(result.borders)
-      const key = cardVariantKey(result.cardName, borders)
-      const quantity = Math.max(1, Math.min(999, Math.floor(result.quantity || 1)))
-      const existing = variants.get(key)
-      if (existing) existing.quantity = Math.min(999, existing.quantity + quantity)
-      else variants.set(key, { cardName: result.cardName, borders, quantity, locked: false, lockedPosition: null })
-    }
-    this.state.inventory.cards = [...variants.values()].sort((left, right) => left.cardName.localeCompare(right.cardName) || borderKey(left.borders).localeCompare(borderKey(right.borders)))
-    this.persist()
-    this.scanOpen = false
-    this.scanResults = []
-    this.render()
   }
 
   private setDeckAura(kind: 'stat' | 'ability', selection: AuraSelection | null) {
