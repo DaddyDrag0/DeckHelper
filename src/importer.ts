@@ -31,7 +31,8 @@ interface Cell {
 
 interface ArtworkReference {
   card: CardDefinition
-  signature: number[]
+  signatures: number[][]
+  embeddings: number[][]
 }
 
 interface OcrWorker {
@@ -44,12 +45,15 @@ declare global {
     Tesseract?: {
       createWorker(language?: string, oem?: number, options?: { logger?: (message: { status?: string; progress?: number }) => void }): Promise<OcrWorker>
     }
+    tf?: { ready(): Promise<void> }
+    mobilenet?: { load(options?: Record<string, unknown>): Promise<any> }
   }
 }
 
 const usableCards = cards.filter((card) => card.rarity > 0 && card.imageAssetId && thumbnail(card.imageAssetId))
 let referencePromise: Promise<ArtworkReference[]> | null = null
 let ocrPromise: Promise<OcrWorker | null> | null = null
+let imageModelPromise: Promise<any | null> | null = null
 
 function hsvToRgb(hue: number, saturation: number, value: number): [number, number, number] {
   const h = ((hue % 1) + 1) % 1 * 6
@@ -171,6 +175,46 @@ async function loadImageFile(file: File): Promise<HTMLImageElement> {
   }
 }
 
+async function getImageModel(onProgress: (progress: InventoryScanProgress) => void): Promise<any | null> {
+  if (imageModelPromise) return imageModelPromise
+  if (!window.tf || !window.mobilenet) return null
+  imageModelPromise = (async () => {
+    onProgress({ stage: 'references', current: 0, total: usableCards.length, message: 'Loading crop-tolerant image matcher' })
+    await window.tf!.ready()
+    return window.mobilenet!.load({ version: 2, alpha: 1.0 })
+  })().catch(() => null)
+  return imageModelPromise
+}
+
+function createFeatureCanvas(image: CanvasImageSource, sx: number, sy: number, sw: number, sh: number): HTMLCanvasElement {
+  const canvas = document.createElement('canvas')
+  canvas.width = 224
+  canvas.height = 224
+  const context = canvas.getContext('2d')!
+  context.fillStyle = '#000'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.drawImage(image, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height)
+  return canvas
+}
+
+async function imageEmbedding(model: any, canvas: HTMLCanvasElement): Promise<number[]> {
+  const tensor = model.infer(canvas, true)
+  try {
+    const values = Array.from(await tensor.data()) as number[]
+    const magnitude = Math.sqrt(values.reduce((total, value) => total + value * value, 0)) || 1
+    return values.map((value) => value / magnitude)
+  } finally {
+    if (typeof tensor.dispose === 'function') tensor.dispose()
+  }
+}
+
+function embeddingDistance(left: number[], right: number[]): number {
+  const length = Math.min(left.length, right.length)
+  let similarity = 0
+  for (let index = 0; index < length; index++) similarity += left[index] * right[index]
+  return 1 - similarity
+}
+
 function signatureFromCanvas(canvas: HTMLCanvasElement): number[] {
   const outputWidth = 30
   const outputHeight = 22
@@ -205,38 +249,32 @@ function signatureDistance(left: number[], right: number[]): number {
   return total / Math.max(1, length)
 }
 
-function artworkCanvas(image: CanvasImageSource, sourceWidth: number, sourceHeight: number): HTMLCanvasElement {
-  const canvas = document.createElement('canvas')
-  canvas.width = 160
-  canvas.height = 120
-  const context = canvas.getContext('2d', { willReadFrequently: true })!
-  context.drawImage(
-    image,
-    sourceWidth * 0.08,
-    sourceHeight * 0.06,
-    sourceWidth * 0.84,
-    sourceHeight * 0.68,
-    0,
-    0,
-    canvas.width,
-    canvas.height,
-  )
-  return canvas
+function artworkCanvases(image: CanvasImageSource, sourceWidth: number, sourceHeight: number): HTMLCanvasElement[] {
+  return [
+    createFeatureCanvas(image, sourceWidth * 0.14, sourceHeight * 0.08, sourceWidth * 0.80, sourceHeight * 0.48),
+    createFeatureCanvas(image, sourceWidth * 0.08, sourceHeight * 0.06, sourceWidth * 0.84, sourceHeight * 0.66),
+  ]
 }
 
 async function getArtworkReferences(onProgress: (progress: InventoryScanProgress) => void): Promise<ArtworkReference[]> {
   if (referencePromise) return referencePromise
   referencePromise = (async () => {
     const references: ArtworkReference[] = []
-    const batchSize = 8
+    const model = await getImageModel(onProgress)
+    const batchSize = 6
     for (let start = 0; start < usableCards.length; start += batchSize) {
       const batch = usableCards.slice(start, start + batchSize)
       const loaded = await Promise.all(batch.map(async (card) => {
         try {
           const source = thumbnail(card.imageAssetId)
           const image = await loadImageSource(source, true)
-          const canvas = artworkCanvas(image, image.naturalWidth || image.width, image.naturalHeight || image.height)
-          return { card, signature: signatureFromCanvas(canvas) }
+          const canvases = artworkCanvases(image, image.naturalWidth || image.width, image.naturalHeight || image.height)
+          const signatures = canvases.map((canvas) => signatureFromCanvas(canvas))
+          const embeddings: number[][] = []
+          if (model) {
+            for (const canvas of canvases) embeddings.push(await imageEmbedding(model, canvas))
+          }
+          return { card, signatures, embeddings }
         } catch {
           return null
         }
@@ -327,23 +365,23 @@ export function detectInventoryGrid(image: HTMLImageElement): Cell[] {
   return cells
 }
 
-function cellArtworkSignature(image: HTMLImageElement, cell: Cell): number[] {
-  const canvas = document.createElement('canvas')
-  canvas.width = 160
-  canvas.height = 120
-  const context = canvas.getContext('2d', { willReadFrequently: true })!
-  context.drawImage(
-    image,
-    cell.x + cell.width * 0.08,
-    cell.y + cell.height * 0.06,
-    cell.width * 0.84,
-    cell.height * 0.68,
-    0,
-    0,
-    canvas.width,
-    canvas.height,
-  )
-  return signatureFromCanvas(canvas)
+function cellArtworkCanvases(image: HTMLImageElement, cell: Cell): HTMLCanvasElement[] {
+  return [
+    createFeatureCanvas(
+      image,
+      cell.x + cell.width * 0.14,
+      cell.y + cell.height * 0.08,
+      cell.width * 0.80,
+      cell.height * 0.48,
+    ),
+    createFeatureCanvas(
+      image,
+      cell.x + cell.width * 0.08,
+      cell.y + cell.height * 0.06,
+      cell.width * 0.84,
+      cell.height * 0.66,
+    ),
+  ]
 }
 
 interface HsvPixel {
@@ -546,48 +584,115 @@ function rarityPenalty(card: CardDefinition, borders: BorderName[], displayedTex
   return { penalty: Math.min(2.5, Math.abs(Math.log(expectedRarity / Math.max(1, parsed)))), exact: false }
 }
 
-function matchCell(
+async function matchCell(
   image: HTMLImageElement,
   cell: Cell,
   references: ArtworkReference[],
   displayedRarity: string,
-): Omit<InventoryScanResult, 'quantity' | 'preview'> {
-  const signature = cellArtworkSignature(image, cell)
+  model: any | null,
+): Promise<Omit<InventoryScanResult, 'quantity' | 'preview'>> {
+  const canvases = cellArtworkCanvases(image, cell)
+  const signatures = canvases.map((canvas) => signatureFromCanvas(canvas))
+  const embeddings: number[][] = []
+  if (model) {
+    for (const canvas of canvases) embeddings.push(await imageEmbedding(model, canvas))
+  }
+
+  const usingEmbeddings = embeddings.length > 0 && references.some((reference) => reference.embeddings.length > 0)
   const artworkRanking = references
-    .map((reference) => ({ reference, distance: signatureDistance(signature, reference.signature) }))
+    .map((reference) => {
+      let distance = 0
+      if (usingEmbeddings && reference.embeddings.length) {
+        const count = Math.min(embeddings.length, reference.embeddings.length)
+        for (let index = 0; index < count; index++) {
+          const weight = index === 0 ? 0.62 : 0.38 / Math.max(1, count - 1)
+          distance += embeddingDistance(embeddings[index], reference.embeddings[index]) * weight
+        }
+      } else {
+        const count = Math.min(signatures.length, reference.signatures.length)
+        for (let index = 0; index < count; index++) {
+          const weight = index === 0 ? 0.62 : 0.38 / Math.max(1, count - 1)
+          distance += signatureDistance(signatures[index], reference.signatures[index]) * weight
+        }
+      }
+      return { reference, distance }
+    })
     .sort((left, right) => left.distance - right.distance)
-  const shortlist = artworkRanking.slice(0, Math.min(10, artworkRanking.length))
+
+  if (!artworkRanking.length) throw new Error('No card artwork references were available.')
+
+  const bestArt = artworkRanking[0].distance
   const visualScores = visualBorderScores(image, cell)
   const bestVisual = Math.min(...visualScores.values())
-  const bestArt = shortlist[0]?.distance ?? 0
-  const candidates: Array<{
-    card: CardDefinition
-    borders: BorderName[]
-    score: number
-    artDistance: number
-    exactRarity: boolean
-  }> = []
+  const closeThreshold = usingEmbeddings
+    ? bestArt + 0.065
+    : bestArt * 1.28 + 0.0015
+  const closeVisuals = artworkRanking.filter((candidate, index) => index < 42 && candidate.distance <= closeThreshold)
+  if (!closeVisuals.length) closeVisuals.push(artworkRanking[0])
 
-  shortlist.forEach((art, artIndex) => {
-    const relativeArt = bestArt > 0 ? Math.max(0, (art.distance - bestArt) / bestArt) : artIndex * 0.1
+  const parsedRarity = parseGameRarityText(displayedRarity)
+  const identityCandidates = closeVisuals.map((art) => {
+    let bestRarityPenalty = Number.POSITIVE_INFINITY
+    let hasExactRarity = false
     for (const variant of ALL_CARD_BORDER_VARIANTS) {
       const rarity = rarityPenalty(art.reference.card, variant.borders, displayedRarity)
-      const visual = (visualScores.get(variant.key) ?? 1) - bestVisual
-      const score = relativeArt * 0.52 + artIndex * 0.018 + rarity.penalty * 1.55 + visual * 0.95
-      candidates.push({ card: art.reference.card, borders: variant.borders, score, artDistance: art.distance, exactRarity: rarity.exact })
+      if (rarity.penalty < bestRarityPenalty) bestRarityPenalty = rarity.penalty
+      hasExactRarity = hasExactRarity || rarity.exact
     }
-  })
+    let score = art.distance
+    // Rarity is intentionally only a small tie-break inside the visually-close set.
+    // It can no longer rescue an unrelated artwork match.
+    if (displayedRarity && parsedRarity) {
+      if (hasExactRarity) score -= usingEmbeddings ? 0.028 : Math.max(0.00035, bestArt * 0.05)
+      else score += usingEmbeddings
+        ? Math.min(0.035, Math.max(0, bestRarityPenalty) * 0.006)
+        : Math.min(Math.max(0.0007, bestArt * 0.10), Math.max(0, bestRarityPenalty) * Math.max(0.00012, bestArt * 0.018))
+    }
+    return { ...art, score, hasExactRarity }
+  }).sort((left, right) => left.score - right.score)
 
-  candidates.sort((left, right) => left.score - right.score)
-  const best = candidates[0]
-  const nextDifferent = candidates.find((candidate) => candidate.card.name !== best.card.name || borderKey(candidate.borders) !== borderKey(best.borders))
-  const gap = nextDifferent ? Math.max(0, nextDifferent.score - best.score) : 0.5
-  const artSecond = artworkRanking[1]?.distance ?? best.artDistance * 1.5
-  const artSeparation = Math.max(0, (artSecond - best.artDistance) / Math.max(0.0001, artSecond))
-  const confidence = Math.round(Math.max(18, Math.min(98, 46 + artSeparation * 90 + gap * 70 + (best.exactRarity ? 14 : 0))))
-  const alternatives = [...new Set(candidates.slice(1, 20).map((candidate) => candidate.card.name).filter((name) => name !== best.card.name))].slice(0, 3)
-  const method = best.exactRarity ? 'Artwork + exact rarity + game border palette' : displayedRarity ? 'Artwork + rarity + game border palette' : 'Artwork + game border palette'
-  return { cardName: best.card.name, borders: canonicalBorders(best.borders), confidence, displayedRarity, method, alternatives }
+  const chosenIdentity = identityCandidates[0]
+  const borderCandidates = ALL_CARD_BORDER_VARIANTS.map((variant) => {
+    const rarity = rarityPenalty(chosenIdentity.reference.card, variant.borders, displayedRarity)
+    const visual = (visualScores.get(variant.key) ?? 1) - bestVisual
+    const score = displayedRarity && parsedRarity
+      ? rarity.penalty * 1.45 + visual * 0.92
+      : visual
+    return { variant, rarity, score }
+  }).sort((left, right) => left.score - right.score)
+
+  const chosenBorder = borderCandidates[0]
+  const nextIdentity = identityCandidates[1]
+  const visualGap = nextIdentity ? Math.max(0, nextIdentity.distance - chosenIdentity.distance) : 0.08
+  const imageQuality = usingEmbeddings
+    ? Math.max(0, Math.min(1, 1 - chosenIdentity.distance))
+    : Math.max(0, Math.min(1, visualGap / Math.max(0.0001, nextIdentity?.distance ?? chosenIdentity.distance + 0.01)))
+  const confidence = Math.round(Math.max(20, Math.min(98,
+    28
+    + imageQuality * 47
+    + (usingEmbeddings ? Math.min(16, visualGap * 260) : Math.min(18, visualGap * 1800))
+    + (chosenBorder.rarity.exact ? 9 : 0)
+  )))
+
+  const alternatives = [...new Set(artworkRanking
+    .filter((candidate) => candidate.reference.card.name !== chosenIdentity.reference.card.name)
+    .slice(0, 8)
+    .map((candidate) => candidate.reference.card.name))].slice(0, 3)
+  const methodPrefix = usingEmbeddings ? 'MobileNet artwork' : 'Artwork fallback'
+  const method = chosenBorder.rarity.exact
+    ? `${methodPrefix} + exact rarity + game border palette`
+    : displayedRarity
+      ? `${methodPrefix} + rarity + game border palette`
+      : `${methodPrefix} + game border palette`
+
+  return {
+    cardName: chosenIdentity.reference.card.name,
+    borders: canonicalBorders(chosenBorder.variant.borders),
+    confidence,
+    displayedRarity,
+    method,
+    alternatives,
+  }
 }
 
 export async function scanInventoryScreenshot(
@@ -598,6 +703,7 @@ export async function scanInventoryScreenshot(
   onProgress({ stage: 'grid', current: 0, total: 1, message: 'Finding the inventory grid' })
   const cells = detectInventoryGrid(image)
   const references = await getArtworkReferences(onProgress)
+  const model = await getImageModel(onProgress)
   const worker = await getOcrWorker(onProgress)
   const results: InventoryScanResult[] = []
 
@@ -605,7 +711,7 @@ export async function scanInventoryScreenshot(
     const cell = cells[index]
     onProgress({ stage: 'cards', current: index, total: cells.length, message: `Reading card ${index + 1}/${cells.length}` })
     const displayedRarity = await recognizeRarity(worker, image, cell)
-    const match = matchCell(image, cell, references, displayedRarity)
+    const match = await matchCell(image, cell, references, displayedRarity, model)
     const quantity = await recognizeQuantity(worker, image, cell)
     results.push({ ...match, quantity, preview: cropPreview(image, cell) })
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))

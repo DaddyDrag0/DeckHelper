@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { ALL_CARD_BORDER_VARIANTS, borderKey } from '../src/card-variants'
 import { EXPANSION_BORDER_PALETTES, formatGameRarity, mergeScannedVariants, parseGameRarityText } from '../src/importer'
@@ -32,3 +33,13 @@ assert.equal(galaxyEntry?.quantity, 3)
 assert.equal(pcEntry?.quantity, 1)
 
 console.log('Importer and exact card-variant regression passed.')
+
+
+const sourceHtml = readFileSync('source.html', 'utf8')
+const importerSource = readFileSync('src/importer.ts', 'utf8')
+if (!sourceHtml.includes('@tensorflow/tfjs@4.22.0') || !sourceHtml.includes('@tensorflow-models/mobilenet@2.1.1')) {
+  throw new Error('Screenshot importer image-model scripts are missing.')
+}
+if (!importerSource.includes("model.infer(canvas, true)") || !importerSource.includes("MobileNet artwork")) {
+  throw new Error('Screenshot importer is not using the crop-tolerant image matcher.')
+}
