@@ -11,6 +11,7 @@ const EMPTY_LOADOUT: TeamLoadout = { cards: [], statAura: null, abilityAura: nul
 export function defaultState(): AppState {
   return {
     inventory: { cards: [], statAuras: [], abilityAuras: [] },
+    pool: [],
     favorites: [],
     currentDeck: { ...EMPTY_LOADOUT, cards: [] },
   }
@@ -141,6 +142,7 @@ export function loadState(): AppState {
       : []
     return {
       inventory: cleanInventory(raw.inventory),
+      pool: cleanLoadout({ cards: Array.isArray(raw.pool) ? raw.pool : [] }).cards,
       favorites,
       currentDeck: cleanLoadout(raw.currentDeck),
     }

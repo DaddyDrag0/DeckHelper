@@ -1,4 +1,4 @@
-import type { AuraBorderName, AuraSelection, BorderName, TeamLoadout } from './types'
+import type { AuraBorderName, AuraSelection, BorderName, TeamCard, TeamLoadout } from './types'
 
 export type DeckSlot = 0 | 1 | 2 | 3
 export type AuraOwnedBorder = 'Base' | AuraBorderName
@@ -32,6 +32,7 @@ export interface SavedDeck {
 
 export interface AppState {
   inventory: InventoryState
+  pool: TeamCard[]
   favorites: SavedDeck[]
   currentDeck: TeamLoadout
 }
