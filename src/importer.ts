@@ -662,7 +662,7 @@ async function recognizeQuantity(worker: OcrWorker | null, image: HTMLImageEleme
   try {
     const result = await worker.recognize(quantityCanvas(image, cell))
     const text = String(result.data.text || '').replace(/\s+/g, '')
-    const match = text.match(/[xX]?(\d{1,3})/)
+    const match = text.match(/[xX](\d{1,3})/)
     const quantity = match ? Number(match[1]) : 1
     return Number.isInteger(quantity) && quantity >= 2 && quantity <= 999 ? quantity : 1
   } catch {
@@ -711,6 +711,67 @@ export function rarityCompatibleBorderKeys(card: CardDefinition, displayedText: 
   return matches.filter((candidate) => candidate.rarity.score <= limit).map((candidate) => candidate.variant.key)
 }
 
+interface JointHypothesis {
+  art: ArtworkReference
+  artworkDistance: number
+  variant: (typeof ALL_CARD_BORDER_VARIANTS)[number]
+  rarity: RarityVariantMatch
+  borderVisual: number
+  jointScore: number
+}
+
+function chooseJointHypothesis(
+  artworkRanking: Array<{ reference: ArtworkReference; distance: number }>,
+  visualScores: Map<string, number>,
+  displayedRarity: string,
+  usingEmbeddings: boolean,
+): JointHypothesis | null {
+  if (!displayedRarity || !artworkRanking.length) return null
+
+  const bestArt = artworkRanking[0].distance
+  const bestVisual = Math.min(...visualScores.values())
+  // Rarity is allowed to correct an artwork mistake, but only inside a broad visual neighborhood.
+  // This keeps a completely unrelated card with a coincidentally matching rarity from winning.
+  const artworkLimit = usingEmbeddings
+    ? bestArt + 0.19
+    : bestArt * 1.75 + 0.006
+  const visuallyPlausible = artworkRanking.filter((candidate, index) => index < 180 && candidate.distance <= artworkLimit)
+  if (!visuallyPlausible.length) visuallyPlausible.push(artworkRanking[0])
+
+  const compatible: Array<Omit<JointHypothesis, 'jointScore'>> = []
+  for (const art of visuallyPlausible) {
+    for (const candidate of rarityMatchesForCard(art.reference.card, displayedRarity)) {
+      if (!Number.isFinite(candidate.rarity.score) || candidate.rarity.score > RARITY_CONSTRAINT_LIMIT) continue
+      compatible.push({
+        art: art.reference,
+        artworkDistance: art.distance,
+        variant: candidate.variant,
+        rarity: candidate.rarity,
+        borderVisual: (visualScores.get(candidate.variant.key) ?? 1) - bestVisual,
+      })
+    }
+  }
+  if (!compatible.length) return null
+
+  const bestRarity = Math.min(...compatible.map((candidate) => candidate.rarity.score))
+  const rarityLimit = Math.min(RARITY_CONSTRAINT_LIMIT, bestRarity + RARITY_TIE_MARGIN)
+  const finalists = compatible.filter((candidate) => candidate.rarity.score <= rarityLimit)
+  const artworkScale = usingEmbeddings
+    ? 0.13
+    : Math.max(0.0025, bestArt * 0.55)
+
+  const scored: JointHypothesis[] = finalists.map((candidate) => {
+    const artworkPenalty = Math.max(0, candidate.artworkDistance - bestArt) / artworkScale
+    const rarityPenalty = Math.max(0, candidate.rarity.score - bestRarity)
+    // Artwork still matters most among valid hypotheses. Rarity is a hard gate above,
+    // while the rendered border palette resolves equal-rarity border collisions.
+    const jointScore = artworkPenalty * 0.78 + rarityPenalty * 3.2 + candidate.borderVisual * 0.82
+    return { ...candidate, jointScore }
+  })
+  scored.sort((left, right) => left.jointScore - right.jointScore)
+  return scored[0] || null
+}
+
 async function matchCell(
   image: HTMLImageElement,
   cell: Cell,
@@ -740,71 +801,61 @@ async function matchCell(
   const bestArt = artworkRanking[0].distance
   const visualScores = visualBorderScores(image, cell)
   const bestVisual = Math.min(...visualScores.values())
-  const closeThreshold = usingEmbeddings
-    ? bestArt + 0.085
-    : bestArt * 1.35 + 0.002
-  const closeVisuals = artworkRanking.filter((candidate, index) => index < 80 && candidate.distance <= closeThreshold)
-  if (!closeVisuals.length) closeVisuals.push(artworkRanking[0])
+  const joint = chooseJointHypothesis(artworkRanking, visualScores, displayedRarity, usingEmbeddings)
 
-  const identityCandidates = closeVisuals.map((art) => {
-    const rarityMatches = rarityMatchesForCard(art.reference.card, displayedRarity)
-    const bestRarityScore = Math.min(...rarityMatches.map((candidate) => candidate.rarity.score))
-    let score = art.distance
-    // Rarity can break a close visual tie, but it is never allowed to rescue unrelated artwork.
-    if (displayedRarity && bestRarityScore <= RARITY_CONSTRAINT_LIMIT) {
-      score -= usingEmbeddings ? 0.018 : Math.max(0.0003, bestArt * 0.04)
-    }
-    return { ...art, score, bestRarityScore }
-  }).sort((left, right) => left.score - right.score)
+  let chosenIdentity: { reference: ArtworkReference; distance: number }
+  let chosenBorder: { variant: (typeof ALL_CARD_BORDER_VARIANTS)[number]; rarity: RarityVariantMatch; visual: number }
+  let rarityConstrained = false
 
-  const chosenIdentity = identityCandidates[0]
-  const allBorderCandidates = rarityMatchesForCard(chosenIdentity.reference.card, displayedRarity).map((candidate) => {
-    const visual = (visualScores.get(candidate.variant.key) ?? 1) - bestVisual
-    return { ...candidate, visual }
-  })
-  const bestRarityScore = Math.min(...allBorderCandidates.map((candidate) => candidate.rarity.score))
-  const rarityConstrained = Boolean(displayedRarity)
-    && Number.isFinite(bestRarityScore)
-    && bestRarityScore <= RARITY_CONSTRAINT_LIMIT
-  const rarityLimit = Math.min(RARITY_CONSTRAINT_LIMIT, bestRarityScore + RARITY_TIE_MARGIN)
-  const allowedBorders = rarityConstrained
-    ? allBorderCandidates.filter((candidate) => candidate.rarity.score <= rarityLimit)
-    : allBorderCandidates
+  if (joint) {
+    chosenIdentity = { reference: joint.art, distance: joint.artworkDistance }
+    chosenBorder = { variant: joint.variant, rarity: joint.rarity, visual: joint.borderVisual }
+    rarityConstrained = true
+  } else {
+    // OCR can occasionally be too damaged to use safely. In that case, fall back to artwork
+    // for identity and border appearance for the border, and visibly mark the result for review.
+    const chosenArt = artworkRanking[0]
+    chosenIdentity = chosenArt
+    const fallbackBorders = rarityMatchesForCard(chosenArt.reference.card, displayedRarity).map((candidate) => ({
+      ...candidate,
+      visual: (visualScores.get(candidate.variant.key) ?? 1) - bestVisual,
+    }))
+    fallbackBorders.sort((left, right) => left.visual - right.visual)
+    chosenBorder = fallbackBorders[0]
+  }
 
-  allowedBorders.sort((left, right) => {
-    if (rarityConstrained) {
-      const leftScore = left.visual + left.rarity.score * 0.18
-      const rightScore = right.visual + right.rarity.score * 0.18
-      return leftScore - rightScore
-    }
-    return left.visual - right.visual
-  })
-  const chosenBorder = allowedBorders[0]
-
-  const nextIdentity = identityCandidates[1]
-  const visualGap = nextIdentity ? Math.max(0, nextIdentity.distance - chosenIdentity.distance) : 0.08
+  const chosenArtworkIndex = artworkRanking.findIndex((candidate) => candidate.reference.card.name === chosenIdentity.reference.card.name)
+  const nextArtwork = artworkRanking.find((candidate, index) => index !== chosenArtworkIndex && candidate.reference.card.name !== chosenIdentity.reference.card.name)
+  const visualGap = nextArtwork ? Math.max(0, nextArtwork.distance - chosenIdentity.distance) : 0.08
   const imageQuality = usingEmbeddings
     ? Math.max(0, Math.min(1, 1 - chosenIdentity.distance))
-    : Math.max(0, Math.min(1, visualGap / Math.max(0.0001, nextIdentity?.distance ?? chosenIdentity.distance + 0.01)))
-  const rarityAdjustment = rarityConstrained ? 12 : displayedRarity ? -8 : 0
-  const confidence = Math.round(Math.max(16, Math.min(98,
+    : Math.max(0, Math.min(1, visualGap / Math.max(0.0001, nextArtwork?.distance ?? chosenIdentity.distance + 0.01)))
+  const rarityAdjustment = rarityConstrained ? 14 : displayedRarity ? -10 : -4
+  const confidence = Math.round(Math.max(14, Math.min(98,
     30
     + imageQuality * 46
-    + (usingEmbeddings ? Math.min(16, visualGap * 260) : Math.min(18, visualGap * 1800))
+    + (usingEmbeddings ? Math.min(16, Math.max(0, visualGap) * 260) : Math.min(18, Math.max(0, visualGap) * 1800))
     + rarityAdjustment
   )))
 
-  const alternatives = [...new Set(artworkRanking
+  // Alternatives should reflect the same rarity-aware candidate pool when possible, rather than
+  // listing cards which can never produce what is printed on the screenshot.
+  const rarityAwareAlternatives = artworkRanking
     .filter((candidate) => candidate.reference.card.name !== chosenIdentity.reference.card.name)
-    .slice(0, 10)
+    .filter((candidate) => !rarityConstrained || rarityCompatibleBorderKeys(candidate.reference.card, displayedRarity).length > 0)
+  const alternativePool = rarityAwareAlternatives.length ? rarityAwareAlternatives : artworkRanking
+  const alternatives = [...new Set(alternativePool
+    .filter((candidate) => candidate.reference.card.name !== chosenIdentity.reference.card.name)
+    .slice(0, 12)
     .map((candidate) => candidate.reference.card.name))].slice(0, 3)
+
   const methodPrefix = usingEmbeddings ? 'MobileNet artwork' : 'Artwork fallback'
   const correctedRarity = rarityConstrained ? chosenBorder.rarity.expectedText : displayedRarity
   const method = rarityConstrained
-    ? `${methodPrefix} + rarity-constrained border + game border palette`
+    ? `${methodPrefix} + joint card/rarity/border match`
     : displayedRarity
-      ? `${methodPrefix} + unclear rarity + game border palette (review border)`
-      : `${methodPrefix} + game border palette (review border)`
+      ? `${methodPrefix} + unclear rarity + game border palette (review card/border)`
+      : `${methodPrefix} + game border palette (review card/border)`
 
   return {
     cardName: chosenIdentity.reference.card.name,

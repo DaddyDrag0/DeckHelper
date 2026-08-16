@@ -23,6 +23,8 @@ assert.equal(formatGameRarity(5_600_000_000_000), '5.6T')
 assert.equal(formatGameRarity(3_000_000_000_000_000), '3qd')
 assert.equal(parseGameRarityText('120T'), 120_000_000_000_000)
 assert.equal(parseGameRarityText('5.6T'), 5_600_000_000_000)
+assert.ok(rarityTextMatchScore('107', '10T') < 0.16, 'Tiny OCR should treat a final 7 as a plausible T suffix')
+assert.ok(rarityTextMatchScore('107', '100T') > 0.16, 'Rarity correction must not freely change the numeric magnitude')
 assert.ok(rarityTextMatchScore('1201', '120T') < 0.1, 'Tiny OCR should treat a trailing 1 as a plausible T')
 assert.ok(rarityTextMatchScore('7.8I', '7.8T') < 0.1, 'Tiny OCR should tolerate I/T suffix confusion')
 
@@ -65,8 +67,8 @@ const formatSource = readFileSync('src/ui/format.ts', 'utf8')
 if (!sourceHtml.includes('@tensorflow/tfjs@4.22.0') || !sourceHtml.includes('@tensorflow-models/mobilenet@2.1.1')) {
   throw new Error('Screenshot importer image-model scripts are missing.')
 }
-if (!importerSource.includes('model.infer(canvas, true)') || !importerSource.includes('rarity-constrained border')) {
-  throw new Error('Screenshot importer is missing the visual matcher or rarity-constrained border selection.')
+if (!importerSource.includes('model.infer(canvas, true)') || !importerSource.includes('chooseJointHypothesis') || !importerSource.includes('joint card/rarity/border match')) {
+  throw new Error('Screenshot importer is missing the visual matcher or joint card/rarity/border selection.')
 }
 if (!formatSource.includes('./public/card-images/')) {
   throw new Error('Card images are not using the same-origin cache.')
