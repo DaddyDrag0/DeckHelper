@@ -122,14 +122,57 @@ function normalizeRarityText(value: string): string {
   return value
     .replace(/\s+/g, '')
     .replace(/[Oo]/g, '0')
-    .replace(/[lI|]/g, '1')
-    .replace(/Q[Dd]/g, 'qd')
-    .replace(/Q[Tt]/g, 'qt')
+    .replace(/Q[Dd]/gi, 'qd')
+    .replace(/Q[Tt]/gi, 'qt')
     .replace(/[^0-9.,A-Za-z]/g, '')
 }
 
+function comparisonRarityText(value: string): string {
+  return normalizeRarityText(value).replace(/,/g, '').toLowerCase()
+}
+
+function raritySubstitutionCost(left: string, right: string, atEnd: boolean): number {
+  if (left === right) return 0
+  const pair = `${left}${right}`
+  if (['1i', 'i1', '1l', 'l1', '0o', 'o0', '5s', 's5'].includes(pair)) return 0.12
+  if (atEnd && ['1t', 't1', '7t', 't7', 'it', 'ti', 'lt', 'tl', '8b', 'b8'].includes(pair)) return 0.12
+  if (atEnd && ['9q', 'q9', '0d', 'd0'].includes(pair)) return 0.28
+  return 1
+}
+
+function rarityGapCost(character: string): number {
+  return character === '.' || character === ',' ? 0.22 : 0.9
+}
+
+export function rarityTextMatchScore(observed: string, expected: string): number {
+  const left = comparisonRarityText(observed)
+  const right = comparisonRarityText(expected)
+  if (!left || !right) return Number.POSITIVE_INFINITY
+  if (left === right) return 0
+
+  const rows = left.length + 1
+  const columns = right.length + 1
+  const matrix = Array.from({ length: rows }, () => Array<number>(columns).fill(0))
+  for (let row = 1; row < rows; row++) matrix[row][0] = matrix[row - 1][0] + rarityGapCost(left[row - 1])
+  for (let column = 1; column < columns; column++) matrix[0][column] = matrix[0][column - 1] + rarityGapCost(right[column - 1])
+
+  for (let row = 1; row < rows; row++) {
+    for (let column = 1; column < columns; column++) {
+      const atEnd = row === left.length || column === right.length
+      const substitution = matrix[row - 1][column - 1] + raritySubstitutionCost(left[row - 1], right[column - 1], atEnd)
+      const deletion = matrix[row - 1][column] + rarityGapCost(left[row - 1])
+      const insertion = matrix[row][column - 1] + rarityGapCost(right[column - 1])
+      matrix[row][column] = Math.min(substitution, deletion, insertion)
+    }
+  }
+
+  return matrix[left.length][right.length] / Math.max(1, left.length, right.length)
+}
+
 export function parseGameRarityText(value: string): number {
-  const text = normalizeRarityText(value).replace(/,/g, '')
+  const text = normalizeRarityText(value)
+    .replace(/[lI|]/g, '1')
+    .replace(/,/g, '')
   const match = text.match(/(\d+(?:\.\d+)?)(qt|qd|[TBMK])?/i)
   if (!match) return 0
   const amount = Number(match[1])
@@ -215,6 +258,21 @@ function embeddingDistance(left: number[], right: number[]): number {
   return 1 - similarity
 }
 
+function bestPairwiseDistance(
+  left: number[][],
+  right: number[][],
+  metric: (first: number[], second: number[]) => number,
+): number {
+  const distances: number[] = []
+  for (const first of left) {
+    for (const second of right) distances.push(metric(first, second))
+  }
+  if (!distances.length) return Number.POSITIVE_INFINITY
+  distances.sort((first, second) => first - second)
+  if (distances.length === 1) return distances[0]
+  return distances[0] * 0.78 + distances[1] * 0.22
+}
+
 function signatureFromCanvas(canvas: HTMLCanvasElement): number[] {
   const outputWidth = 30
   const outputHeight = 22
@@ -251,8 +309,9 @@ function signatureDistance(left: number[], right: number[]): number {
 
 function artworkCanvases(image: CanvasImageSource, sourceWidth: number, sourceHeight: number): HTMLCanvasElement[] {
   return [
-    createFeatureCanvas(image, sourceWidth * 0.14, sourceHeight * 0.08, sourceWidth * 0.80, sourceHeight * 0.48),
-    createFeatureCanvas(image, sourceWidth * 0.08, sourceHeight * 0.06, sourceWidth * 0.84, sourceHeight * 0.66),
+    createFeatureCanvas(image, 0, 0, sourceWidth, sourceHeight),
+    createFeatureCanvas(image, sourceWidth * 0.06, sourceHeight * 0.03, sourceWidth * 0.88, sourceHeight * 0.76),
+    createFeatureCanvas(image, sourceWidth * 0.11, sourceHeight * 0.07, sourceWidth * 0.78, sourceHeight * 0.66),
   ]
 }
 
@@ -267,7 +326,7 @@ async function getArtworkReferences(onProgress: (progress: InventoryScanProgress
       const loaded = await Promise.all(batch.map(async (card) => {
         try {
           const source = thumbnail(card.imageAssetId)
-          const image = await loadImageSource(source, true)
+          const image = await loadImageSource(source)
           const canvases = artworkCanvases(image, image.naturalWidth || image.width, image.naturalHeight || image.height)
           const signatures = canvases.map((canvas) => signatureFromCanvas(canvas))
           const embeddings: number[][] = []
@@ -288,7 +347,9 @@ async function getArtworkReferences(onProgress: (progress: InventoryScanProgress
       })
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
     }
-    if (!references.length) throw new Error('Card reference images could not be loaded. Check your connection and try again.')
+    if (references.length !== usableCards.length) {
+      throw new Error(`Only ${references.length}/${usableCards.length} card reference images loaded. Refresh and try again; DeckHelper will not guess from an incomplete library.`)
+    }
     return references
   })()
   return referencePromise
@@ -380,9 +441,23 @@ export function detectInventoryGrid(image: HTMLImageElement): Cell[] {
       sampleContext.drawImage(image, cell.x + cell.width * 0.12, cell.y + cell.height * 0.12, cell.width * 0.76, cell.height * 0.62, 0, 0, 12, 12)
       const sampleData = sampleContext.getImageData(0, 0, 12, 12).data
       let brightness = 0
-      for (let index = 0; index < sampleData.length; index += 4) brightness += Math.max(sampleData[index], sampleData[index + 1], sampleData[index + 2])
-      brightness /= Math.max(1, sampleData.length / 4)
-      if (brightness > 20) cells.push(cell)
+      let brightnessSquared = 0
+      let colorfulPixels = 0
+      const pixelCount = Math.max(1, sampleData.length / 4)
+      for (let index = 0; index < sampleData.length; index += 4) {
+        const red = sampleData[index]
+        const green = sampleData[index + 1]
+        const blue = sampleData[index + 2]
+        const maximum = Math.max(red, green, blue)
+        const minimum = Math.min(red, green, blue)
+        brightness += maximum
+        brightnessSquared += maximum * maximum
+        if (maximum > 24 && maximum - minimum > 15) colorfulPixels += 1
+      }
+      brightness /= pixelCount
+      const variance = Math.max(0, brightnessSquared / pixelCount - brightness * brightness)
+      const deviation = Math.sqrt(variance)
+      if (brightness > 8 || deviation > 12 || colorfulPixels / pixelCount > 0.025) cells.push(cell)
     }
   }
   if (!cells.length) throw new Error('The grid was found, but no card artwork was detected.')
@@ -393,17 +468,24 @@ function cellArtworkCanvases(image: HTMLImageElement, cell: Cell): HTMLCanvasEle
   return [
     createFeatureCanvas(
       image,
-      cell.x + cell.width * 0.14,
-      cell.y + cell.height * 0.08,
-      cell.width * 0.80,
-      cell.height * 0.48,
+      cell.x + cell.width * 0.05,
+      cell.y + cell.height * 0.035,
+      cell.width * 0.90,
+      cell.height * 0.73,
     ),
     createFeatureCanvas(
       image,
-      cell.x + cell.width * 0.08,
-      cell.y + cell.height * 0.06,
-      cell.width * 0.84,
-      cell.height * 0.66,
+      cell.x + cell.width * 0.10,
+      cell.y + cell.height * 0.055,
+      cell.width * 0.80,
+      cell.height * 0.67,
+    ),
+    createFeatureCanvas(
+      image,
+      cell.x + cell.width * 0.14,
+      cell.y + cell.height * 0.08,
+      cell.width * 0.72,
+      cell.height * 0.59,
     ),
   ]
 }
@@ -597,15 +679,36 @@ function cropPreview(image: HTMLImageElement, cell: Cell): string {
   return canvas.toDataURL('image/jpeg', 0.82)
 }
 
-function rarityPenalty(card: CardDefinition, borders: BorderName[], displayedText: string): { penalty: number; exact: boolean } {
-  if (!displayedText) return { penalty: 0.22, exact: false }
-  const expectedRarity = rarityWithBorders(card, borders)
-  const expectedText = normalizeRarityText(formatGameRarity(expectedRarity))
-  const recognized = normalizeRarityText(displayedText)
-  if (recognized.toLowerCase() === expectedText.toLowerCase()) return { penalty: -0.35, exact: true }
-  const parsed = parseGameRarityText(recognized)
-  if (!parsed) return { penalty: 0.3, exact: false }
-  return { penalty: Math.min(2.5, Math.abs(Math.log(expectedRarity / Math.max(1, parsed)))), exact: false }
+interface RarityVariantMatch {
+  expectedText: string
+  score: number
+  exact: boolean
+}
+
+const RARITY_CONSTRAINT_LIMIT = 0.16
+const RARITY_TIE_MARGIN = 0.035
+
+function rarityVariantMatch(card: CardDefinition, borders: BorderName[], displayedText: string): RarityVariantMatch {
+  const expectedText = formatGameRarity(rarityWithBorders(card, borders))
+  if (!displayedText) return { expectedText, score: Number.POSITIVE_INFINITY, exact: false }
+  const score = rarityTextMatchScore(displayedText, expectedText)
+  return { expectedText, score, exact: score === 0 }
+}
+
+function rarityMatchesForCard(card: CardDefinition, displayedText: string) {
+  return ALL_CARD_BORDER_VARIANTS.map((variant) => ({
+    variant,
+    rarity: rarityVariantMatch(card, variant.borders, displayedText),
+  }))
+}
+
+export function rarityCompatibleBorderKeys(card: CardDefinition, displayedText: string): string[] {
+  if (!displayedText) return []
+  const matches = rarityMatchesForCard(card, displayedText)
+  const best = Math.min(...matches.map((candidate) => candidate.rarity.score))
+  if (!Number.isFinite(best) || best > RARITY_CONSTRAINT_LIMIT) return []
+  const limit = Math.min(RARITY_CONSTRAINT_LIMIT, best + RARITY_TIE_MARGIN)
+  return matches.filter((candidate) => candidate.rarity.score <= limit).map((candidate) => candidate.variant.key)
 }
 
 async function matchCell(
@@ -622,23 +725,12 @@ async function matchCell(
     for (const canvas of canvases) embeddings.push(await imageEmbedding(model, canvas))
   }
 
-  const usingEmbeddings = embeddings.length > 0 && references.some((reference) => reference.embeddings.length > 0)
+  const usingEmbeddings = embeddings.length > 0 && references.every((reference) => reference.embeddings.length > 0)
   const artworkRanking = references
     .map((reference) => {
-      let distance = 0
-      if (usingEmbeddings && reference.embeddings.length) {
-        const count = Math.min(embeddings.length, reference.embeddings.length)
-        for (let index = 0; index < count; index++) {
-          const weight = index === 0 ? 0.62 : 0.38 / Math.max(1, count - 1)
-          distance += embeddingDistance(embeddings[index], reference.embeddings[index]) * weight
-        }
-      } else {
-        const count = Math.min(signatures.length, reference.signatures.length)
-        for (let index = 0; index < count; index++) {
-          const weight = index === 0 ? 0.62 : 0.38 / Math.max(1, count - 1)
-          distance += signatureDistance(signatures[index], reference.signatures[index]) * weight
-        }
-      }
+      const distance = usingEmbeddings
+        ? bestPairwiseDistance(embeddings, reference.embeddings, embeddingDistance)
+        : bestPairwiseDistance(signatures, reference.signatures, signatureDistance)
       return { reference, distance }
     })
     .sort((left, right) => left.distance - right.distance)
@@ -649,71 +741,76 @@ async function matchCell(
   const visualScores = visualBorderScores(image, cell)
   const bestVisual = Math.min(...visualScores.values())
   const closeThreshold = usingEmbeddings
-    ? bestArt + 0.065
-    : bestArt * 1.28 + 0.0015
-  const closeVisuals = artworkRanking.filter((candidate, index) => index < 42 && candidate.distance <= closeThreshold)
+    ? bestArt + 0.085
+    : bestArt * 1.35 + 0.002
+  const closeVisuals = artworkRanking.filter((candidate, index) => index < 80 && candidate.distance <= closeThreshold)
   if (!closeVisuals.length) closeVisuals.push(artworkRanking[0])
 
-  const parsedRarity = parseGameRarityText(displayedRarity)
   const identityCandidates = closeVisuals.map((art) => {
-    let bestRarityPenalty = Number.POSITIVE_INFINITY
-    let hasExactRarity = false
-    for (const variant of ALL_CARD_BORDER_VARIANTS) {
-      const rarity = rarityPenalty(art.reference.card, variant.borders, displayedRarity)
-      if (rarity.penalty < bestRarityPenalty) bestRarityPenalty = rarity.penalty
-      hasExactRarity = hasExactRarity || rarity.exact
-    }
+    const rarityMatches = rarityMatchesForCard(art.reference.card, displayedRarity)
+    const bestRarityScore = Math.min(...rarityMatches.map((candidate) => candidate.rarity.score))
     let score = art.distance
-    // Rarity is intentionally only a small tie-break inside the visually-close set.
-    // It can no longer rescue an unrelated artwork match.
-    if (displayedRarity && parsedRarity) {
-      if (hasExactRarity) score -= usingEmbeddings ? 0.028 : Math.max(0.00035, bestArt * 0.05)
-      else score += usingEmbeddings
-        ? Math.min(0.035, Math.max(0, bestRarityPenalty) * 0.006)
-        : Math.min(Math.max(0.0007, bestArt * 0.10), Math.max(0, bestRarityPenalty) * Math.max(0.00012, bestArt * 0.018))
+    // Rarity can break a close visual tie, but it is never allowed to rescue unrelated artwork.
+    if (displayedRarity && bestRarityScore <= RARITY_CONSTRAINT_LIMIT) {
+      score -= usingEmbeddings ? 0.018 : Math.max(0.0003, bestArt * 0.04)
     }
-    return { ...art, score, hasExactRarity }
+    return { ...art, score, bestRarityScore }
   }).sort((left, right) => left.score - right.score)
 
   const chosenIdentity = identityCandidates[0]
-  const borderCandidates = ALL_CARD_BORDER_VARIANTS.map((variant) => {
-    const rarity = rarityPenalty(chosenIdentity.reference.card, variant.borders, displayedRarity)
-    const visual = (visualScores.get(variant.key) ?? 1) - bestVisual
-    const score = displayedRarity && parsedRarity
-      ? rarity.penalty * 1.45 + visual * 0.92
-      : visual
-    return { variant, rarity, score }
-  }).sort((left, right) => left.score - right.score)
+  const allBorderCandidates = rarityMatchesForCard(chosenIdentity.reference.card, displayedRarity).map((candidate) => {
+    const visual = (visualScores.get(candidate.variant.key) ?? 1) - bestVisual
+    return { ...candidate, visual }
+  })
+  const bestRarityScore = Math.min(...allBorderCandidates.map((candidate) => candidate.rarity.score))
+  const rarityConstrained = Boolean(displayedRarity)
+    && Number.isFinite(bestRarityScore)
+    && bestRarityScore <= RARITY_CONSTRAINT_LIMIT
+  const rarityLimit = Math.min(RARITY_CONSTRAINT_LIMIT, bestRarityScore + RARITY_TIE_MARGIN)
+  const allowedBorders = rarityConstrained
+    ? allBorderCandidates.filter((candidate) => candidate.rarity.score <= rarityLimit)
+    : allBorderCandidates
 
-  const chosenBorder = borderCandidates[0]
+  allowedBorders.sort((left, right) => {
+    if (rarityConstrained) {
+      const leftScore = left.visual + left.rarity.score * 0.18
+      const rightScore = right.visual + right.rarity.score * 0.18
+      return leftScore - rightScore
+    }
+    return left.visual - right.visual
+  })
+  const chosenBorder = allowedBorders[0]
+
   const nextIdentity = identityCandidates[1]
   const visualGap = nextIdentity ? Math.max(0, nextIdentity.distance - chosenIdentity.distance) : 0.08
   const imageQuality = usingEmbeddings
     ? Math.max(0, Math.min(1, 1 - chosenIdentity.distance))
     : Math.max(0, Math.min(1, visualGap / Math.max(0.0001, nextIdentity?.distance ?? chosenIdentity.distance + 0.01)))
-  const confidence = Math.round(Math.max(20, Math.min(98,
-    28
-    + imageQuality * 47
+  const rarityAdjustment = rarityConstrained ? 12 : displayedRarity ? -8 : 0
+  const confidence = Math.round(Math.max(16, Math.min(98,
+    30
+    + imageQuality * 46
     + (usingEmbeddings ? Math.min(16, visualGap * 260) : Math.min(18, visualGap * 1800))
-    + (chosenBorder.rarity.exact ? 9 : 0)
+    + rarityAdjustment
   )))
 
   const alternatives = [...new Set(artworkRanking
     .filter((candidate) => candidate.reference.card.name !== chosenIdentity.reference.card.name)
-    .slice(0, 8)
+    .slice(0, 10)
     .map((candidate) => candidate.reference.card.name))].slice(0, 3)
   const methodPrefix = usingEmbeddings ? 'MobileNet artwork' : 'Artwork fallback'
-  const method = chosenBorder.rarity.exact
-    ? `${methodPrefix} + exact rarity + game border palette`
+  const correctedRarity = rarityConstrained ? chosenBorder.rarity.expectedText : displayedRarity
+  const method = rarityConstrained
+    ? `${methodPrefix} + rarity-constrained border + game border palette`
     : displayedRarity
-      ? `${methodPrefix} + rarity + game border palette`
-      : `${methodPrefix} + game border palette`
+      ? `${methodPrefix} + unclear rarity + game border palette (review border)`
+      : `${methodPrefix} + game border palette (review border)`
 
   return {
     cardName: chosenIdentity.reference.card.name,
     borders: canonicalBorders(chosenBorder.variant.borders),
     confidence,
-    displayedRarity,
+    displayedRarity: correctedRarity,
     method,
     alternatives,
   }
