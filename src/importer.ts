@@ -318,7 +318,7 @@ export function detectInventoryGrid(image: HTMLImageElement): Cell[] {
   const canvas = imageToCanvas(image, width, height)
   const context = canvas.getContext('2d', { willReadFrequently: true })!
   const pixels = context.getImageData(0, 0, width, height).data
-  let best: { score: number; columns: number; rows: number } | null = null
+  const gridCandidates: Array<{ score: number; columns: number; rows: number }> = []
 
   for (let columns = 1; columns <= 12; columns++) {
     for (let rows = 1; rows <= 12; rows++) {
@@ -335,8 +335,32 @@ export function detectInventoryGrid(image: HTMLImageElement): Cell[] {
         ? Array.from({ length: rows - 1 }, (_, index) => stripBrightness(pixels, width, height, 'y', (index + 1) * cellHeight)).reduce((sum, value) => sum + value, 0) / (rows - 1)
         : 0.5
       const score = (vertical + horizontal) / 2 + Math.abs(Math.log(aspect)) * 0.22
-      if (!best || score < best.score) best = { score, columns, rows }
+      gridCandidates.push({ score, columns, rows })
     }
+  }
+
+  // A compact inventory can make every second separator look slightly darker than the
+  // real per-card separators. That caused a true 6x4 grid to be mistaken for 3x2,
+  // grouping four cards into every scan cell. Start with the strongest coarse grid,
+  // then prefer a finer integer subdivision when its separator score is nearly as good.
+  const rankedGrids = gridCandidates.sort((left, right) => left.score - right.score)
+  const coarseBest = rankedGrids[0] || null
+  let best = coarseBest
+  if (coarseBest) {
+    const refinementMargin = Math.min(0.055, Math.max(0.028, coarseBest.score * 0.22))
+    const refinements = rankedGrids.filter((candidate) => {
+      if (candidate.score > coarseBest.score + refinementMargin) return false
+      if (candidate.columns % coarseBest.columns !== 0 || candidate.rows % coarseBest.rows !== 0) return false
+      const columnFactor = candidate.columns / coarseBest.columns
+      const rowFactor = candidate.rows / coarseBest.rows
+      if (columnFactor > 3 || rowFactor > 3) return false
+      return columnFactor >= 1 && rowFactor >= 1
+    })
+    refinements.sort((left, right) => {
+      const cellDifference = right.columns * right.rows - left.columns * left.rows
+      return cellDifference || left.score - right.score
+    })
+    best = refinements[0] || coarseBest
   }
 
   if (!best || best.score > 0.72) throw new Error('Could not identify the inventory card grid. Crop the screenshot to the cards and try again.')
