@@ -1,0 +1,737 @@
+import cards from '../data/cards'
+import auras from '../data/auras'
+import type {
+  InventoryState,
+  OptimizerProgress,
+  OwnedAura,
+  OwnedCard,
+  RankedTeam,
+  ReplacementResult,
+  SearchSettings,
+  TeamMetrics,
+} from '../app-types'
+import { auraSelection } from '../app-types'
+import type { AuraSelection, TeamCard, TeamLoadout } from '../types'
+import { createBattleStateV2, simulateBattleV2 } from '../engine/battle-v2'
+import { generateDepthsTeam } from '../engine/depths'
+import { getPower } from '../engine/stats'
+
+const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
+const AURA_BY_NAME = new Map(auras.map((aura) => [aura.name, aura] as const))
+
+const COMMON_SEEDS = [
+  1009, 2027, 3011, 4001, 5003, 6011, 7013, 8011, 9001, 10007, 11003,
+  12007, 13001, 14009, 15013, 16001, 17011, 18013, 19001, 20011, 21001,
+]
+
+export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
+  candidateCap: 20_000,
+  quickCandidateCap: 1_000,
+  middleCandidateCap: 120,
+  finalistCap: 10,
+  finalSeedCount: 11,
+  maxFloor: 100_000,
+}
+
+interface Candidate {
+  names: string[]
+  loadout: TeamLoadout
+  heuristic: number
+  quickEstimate: number
+  middleEstimate: number
+  trusted: boolean
+  unsupported: Set<string>
+}
+
+interface ProbeResult {
+  wins: number
+  runs: number
+  averageTurns: number
+  trusted: boolean
+  unsupported: string[]
+}
+
+interface ThresholdResult {
+  estimate: number
+  simulations: number
+  trusted: boolean
+  unsupported: string[]
+}
+
+interface SearchRuntime {
+  simulations: number
+  possibleCombinations: number
+  quickTested: number
+  remainingCandidates: number
+  finalists: number
+  fullySimulated: number
+  fullySimulatedTotal: number
+}
+
+function settingsWithDefaults(settings?: Partial<SearchSettings>): SearchSettings {
+  return {
+    candidateCap: Math.max(100, Math.floor(settings?.candidateCap ?? DEFAULT_SEARCH_SETTINGS.candidateCap)),
+    quickCandidateCap: Math.max(20, Math.floor(settings?.quickCandidateCap ?? DEFAULT_SEARCH_SETTINGS.quickCandidateCap)),
+    middleCandidateCap: Math.max(10, Math.floor(settings?.middleCandidateCap ?? DEFAULT_SEARCH_SETTINGS.middleCandidateCap)),
+    finalistCap: Math.max(3, Math.floor(settings?.finalistCap ?? DEFAULT_SEARCH_SETTINGS.finalistCap)),
+    finalSeedCount: Math.max(3, Math.floor(settings?.finalSeedCount ?? DEFAULT_SEARCH_SETTINGS.finalSeedCount)) | 1,
+    maxFloor: Math.max(100, Math.floor(settings?.maxFloor ?? DEFAULT_SEARCH_SETTINGS.maxFloor)),
+  }
+}
+
+function emitProgress(
+  runtime: SearchRuntime,
+  phase: OptimizerProgress['phase'],
+  callback: (progress: OptimizerProgress) => void,
+  currentBest?: RankedTeam,
+  message?: string,
+) {
+  callback({
+    phase,
+    possibleCombinations: runtime.possibleCombinations,
+    quickTested: runtime.quickTested,
+    remainingCandidates: runtime.remainingCandidates,
+    finalists: runtime.finalists,
+    fullySimulated: runtime.fullySimulated,
+    fullySimulatedTotal: runtime.fullySimulatedTotal,
+    simulations: runtime.simulations,
+    currentBest,
+    message,
+  })
+}
+
+function chooseCount(n: number, k: number): number {
+  if (k < 0 || k > n) return 0
+  if (k === 0 || k === n) return 1
+  let result = 1
+  const limit = Math.min(k, n - k)
+  for (let i = 1; i <= limit; i++) {
+    result *= (n - limit + i) / i
+    if (!Number.isFinite(result) || result > Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER
+  }
+  return Math.round(result)
+}
+
+function cardRawScore(card: OwnedCard): number {
+  const definition = CARD_BY_NAME.get(card.cardName)
+  if (!definition) return 0
+  const power = getPower(definition, card.borders)
+  const hpFactor = Math.max(0.25, definition.hpMultiplier || 1)
+  return Math.log10(power + 10) * Math.sqrt(hpFactor)
+}
+
+function ownedCardToTeamCard(card: OwnedCard): TeamCard {
+  return { cardName: card.cardName, borders: [...card.borders] }
+}
+
+function validateInventory(inventory: InventoryState) {
+  const validCards = inventory.cards.filter((card) => CARD_BY_NAME.has(card.cardName))
+  if (validCards.length < 4) throw new Error('Add at least 4 cards to your inventory before searching.')
+
+  const locked = validCards.filter((card) => card.locked || card.lockedPosition !== null)
+  if (locked.length > 4) throw new Error('You can lock at most 4 cards.')
+
+  const positions = new Set<number>()
+  for (const card of locked) {
+    if (card.lockedPosition === null) continue
+    if (positions.has(card.lockedPosition)) throw new Error(`More than one card is locked to position ${card.lockedPosition + 1}.`)
+    positions.add(card.lockedPosition)
+  }
+  return { validCards, locked }
+}
+
+function buildDefaultOrder(names: string[], inventoryMap: Map<string, OwnedCard>): TeamCard[] {
+  const slots: Array<TeamCard | null> = [null, null, null, null]
+  const remaining: OwnedCard[] = []
+  for (const name of names) {
+    const owned = inventoryMap.get(name)
+    if (!owned) continue
+    if (owned.lockedPosition !== null) slots[owned.lockedPosition] = ownedCardToTeamCard(owned)
+    else remaining.push(owned)
+  }
+  remaining.sort((a, b) => cardRawScore(b) - cardRawScore(a))
+  for (let slot = 0; slot < slots.length; slot++) {
+    if (!slots[slot]) slots[slot] = ownedCardToTeamCard(remaining.shift()!)
+  }
+  return slots.filter((card): card is TeamCard => Boolean(card))
+}
+
+function expandAuraOptions(owned: OwnedAura[], lockedOnly: boolean): Array<AuraSelection | null> {
+  const source = lockedOnly ? owned.filter((aura) => aura.locked) : owned
+  const options: Array<AuraSelection | null> = []
+  if (!lockedOnly) options.push(null)
+  for (const aura of source) {
+    if (!AURA_BY_NAME.has(aura.auraName)) continue
+    for (const border of aura.borders.length ? aura.borders : ['Base' as const]) {
+      options.push(auraSelection(aura.auraName, border))
+    }
+  }
+  return options.length ? options : [null]
+}
+
+function auraOptions(inventory: InventoryState, type: 'stat' | 'ability'): Array<AuraSelection | null> {
+  const owned = type === 'stat' ? inventory.statAuras : inventory.abilityAuras
+  const locked = owned.filter((aura) => aura.locked)
+  if (locked.length > 1) throw new Error(`Only one ${type === 'stat' ? 'Stat' : 'Ability'} Aura can be locked at a time.`)
+  return expandAuraOptions(owned, locked.length === 1)
+}
+
+function rawLoadoutScore(cards: TeamCard[], statAura: AuraSelection | null): number {
+  const loadout: TeamLoadout = { cards, statAura, abilityAura: null }
+  const state = createBattleStateV2(loadout, [])
+  let score = 0
+  for (const card of state.teams.Allies) {
+    score += Math.log10(Math.max(1, card.damage)) * 0.48
+    score += Math.log10(Math.max(1, card.maxHp)) * 0.52
+  }
+  return score
+}
+
+function bestStatAuras(cards: TeamCard[], options: Array<AuraSelection | null>, count = 1): Array<AuraSelection | null> {
+  return options
+    .map((aura) => ({ aura, score: rawLoadoutScore(cards, aura) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, count))
+    .map((entry) => entry.aura)
+}
+
+function initialFloorGuess(loadout: TeamLoadout, maxFloor: number): number {
+  const state = createBattleStateV2(loadout, [])
+  if (!state.teams.Allies.length) return 1
+  const equivalents = state.teams.Allies.map((card) => {
+    const hpMultiplier = Math.max(0.05, card.definition.hpMultiplier || 1)
+    const hpPower = card.maxHp / hpMultiplier
+    const attackPower = card.damage * 2
+    return Math.sqrt(Math.max(1, hpPower * attackPower))
+  }).sort((a, b) => a - b)
+  const middle = equivalents[Math.floor(equivalents.length / 2)] || equivalents[0]
+  const budget = Math.max(0, middle * middle / 2 - 3000)
+  const floor = Math.pow(budget / 40, 1 / 2.75)
+  return Math.max(1, Math.min(maxFloor, Math.round(Number.isFinite(floor) ? floor : 1)))
+}
+
+function mixSeed(runSeed: number, floor: number): number {
+  let x = (runSeed ^ Math.imul(floor, 0x9e3779b1)) >>> 0
+  x ^= x >>> 16
+  x = Math.imul(x, 0x85ebca6b) >>> 0
+  x ^= x >>> 13
+  x = Math.imul(x, 0xc2b2ae35) >>> 0
+  return (x ^ (x >>> 16)) >>> 0
+}
+
+function probeFloor(loadout: TeamLoadout, floor: number, seeds: number[], runtime: SearchRuntime): ProbeResult {
+  let wins = 0
+  let turns = 0
+  let trusted = true
+  const unsupported = new Set<string>()
+  for (const seed of seeds) {
+    const floorSeed = mixSeed(seed, floor)
+    const enemies = generateDepthsTeam(floor, floorSeed)
+    const battle = simulateBattleV2(loadout, enemies, floorSeed ^ 0x51ed270b, 2_000, true, false)
+    runtime.simulations += 1
+    if (battle.winner === 'Allies') wins += 1
+    turns += battle.turns
+    trusted = trusted && battle.trusted
+    for (const ability of battle.unsupportedAbilities) unsupported.add(ability)
+  }
+  return {
+    wins,
+    runs: seeds.length,
+    averageTurns: turns / Math.max(1, seeds.length),
+    trusted,
+    unsupported: [...unsupported],
+  }
+}
+
+function estimateThreshold(
+  loadout: TeamLoadout,
+  seeds: number[],
+  runtime: SearchRuntime,
+  maxFloor: number,
+  initial?: number,
+  binarySteps = 4,
+): ThresholdResult {
+  const cache = new Map<number, ProbeResult>()
+  let trusted = true
+  const unsupported = new Set<string>()
+  const before = runtime.simulations
+
+  const winsAt = (floor: number) => {
+    const normalized = Math.max(1, Math.min(maxFloor, Math.round(floor)))
+    let probe = cache.get(normalized)
+    if (!probe) {
+      probe = probeFloor(loadout, normalized, seeds, runtime)
+      cache.set(normalized, probe)
+      trusted = trusted && probe.trusted
+      for (const ability of probe.unsupported) unsupported.add(ability)
+    }
+    return probe.wins / Math.max(1, probe.runs) >= 0.5
+  }
+
+  let guess = Math.max(1, Math.min(maxFloor, Math.round(initial ?? initialFloorGuess(loadout, maxFloor))))
+  let low = 0
+  let high = maxFloor
+
+  if (winsAt(guess)) {
+    low = guess
+    let next = Math.min(maxFloor, Math.max(guess + 1, Math.round(guess * 1.65 + 25)))
+    while (next < maxFloor && winsAt(next)) {
+      low = next
+      next = Math.min(maxFloor, Math.max(next + 1, Math.round(next * 1.65 + 25)))
+    }
+    if (next === maxFloor && winsAt(next)) return { estimate: maxFloor, simulations: runtime.simulations - before, trusted, unsupported: [...unsupported] }
+    high = next
+  } else {
+    high = guess
+    let next = Math.max(1, Math.floor(guess / 1.65))
+    while (next > 1 && !winsAt(next)) {
+      high = next
+      next = Math.max(1, Math.floor(next / 1.65))
+    }
+    if (next === 1 && !winsAt(1)) return { estimate: 1, simulations: runtime.simulations - before, trusted, unsupported: [...unsupported] }
+    low = next
+  }
+
+  for (let step = 0; step < binarySteps && high - low > 1; step++) {
+    const mid = Math.floor((low + high) / 2)
+    if (winsAt(mid)) low = mid
+    else high = mid
+  }
+
+  return {
+    estimate: Math.max(1, (low + high) / 2),
+    simulations: runtime.simulations - before,
+    trusted,
+    unsupported: [...unsupported],
+  }
+}
+
+function xorshift(seed: number) {
+  let state = seed >>> 0 || 0x9e3779b9
+  return () => {
+    state ^= state << 13
+    state ^= state >>> 17
+    state ^= state << 5
+    return (state >>> 0) / 0x1_0000_0000
+  }
+}
+
+function enumerateCombinations<T>(items: T[], choose: number, limit: number, callback: (picked: T[]) => void) {
+  if (choose === 0) {
+    callback([])
+    return
+  }
+  const picked: T[] = []
+  let emitted = 0
+  const walk = (start: number) => {
+    if (emitted >= limit) return
+    if (picked.length === choose) {
+      emitted += 1
+      callback([...picked])
+      return
+    }
+    const needed = choose - picked.length
+    for (let index = start; index <= items.length - needed && emitted < limit; index++) {
+      picked.push(items[index])
+      walk(index + 1)
+      picked.pop()
+    }
+  }
+  walk(0)
+}
+
+function generateTeamNameSets(inventory: InventoryState, cap: number): { sets: string[][]; possible: number } {
+  const { validCards, locked } = validateInventory(inventory)
+  const lockedNames = new Set(locked.map((card) => card.cardName))
+  const unlocked = validCards.filter((card) => !lockedNames.has(card.cardName))
+  const need = 4 - locked.length
+  const possible = chooseCount(unlocked.length, need)
+  const sets: string[][] = []
+  const seen = new Set<string>()
+
+  const add = (extras: OwnedCard[]) => {
+    if (extras.length !== need) return
+    const names = [...locked.map((card) => card.cardName), ...extras.map((card) => card.cardName)]
+    if (new Set(names).size !== 4) return
+    const key = [...names].sort().join('\u0000')
+    if (seen.has(key)) return
+    seen.add(key)
+    sets.push(names)
+  }
+
+  if (need === 0) return { sets: [[...lockedNames]], possible: 1 }
+  if (possible <= cap) {
+    enumerateCombinations(unlocked, need, cap, add)
+    return { sets, possible }
+  }
+
+  const ranked = [...unlocked].sort((a, b) => cardRawScore(b) - cardRawScore(a))
+  const core = ranked.slice(0, Math.min(28, ranked.length))
+  const coreBudget = Math.max(1, Math.floor(cap * 0.6))
+  enumerateCombinations(core, need, coreBudget, add)
+
+  const outsiders = ranked.slice(core.length)
+  const support = core.slice(0, Math.max(8, need + 4))
+  for (let outerIndex = 0; outerIndex < outsiders.length && sets.length < cap; outerIndex++) {
+    if (need === 1) {
+      add([outsiders[outerIndex]])
+      continue
+    }
+    const required = need - 1
+    for (let variant = 0; variant < 4 && sets.length < cap; variant++) {
+      const picked: OwnedCard[] = [outsiders[outerIndex]]
+      const used = new Set<string>([outsiders[outerIndex].cardName])
+      for (let offset = 0; offset < support.length && picked.length < need; offset++) {
+        const candidate = support[(outerIndex + variant * 3 + offset) % support.length]
+        if (used.has(candidate.cardName)) continue
+        used.add(candidate.cardName)
+        picked.push(candidate)
+      }
+      if (picked.length === required + 1) add(picked)
+    }
+  }
+
+  const random = xorshift(0xdecafbad ^ validCards.length)
+  let attempts = 0
+  while (sets.length < cap && attempts++ < cap * 40) {
+    const picked: OwnedCard[] = []
+    const used = new Set<number>()
+    while (picked.length < need && used.size < unlocked.length) {
+      const index = Math.floor(random() * unlocked.length)
+      if (used.has(index)) continue
+      used.add(index)
+      picked.push(unlocked[index])
+    }
+    add(picked)
+  }
+
+  return { sets, possible }
+}
+
+function preselectByHeuristic(candidates: Candidate[], cap: number): Candidate[] {
+  if (candidates.length <= cap) return candidates.sort((a, b) => b.heuristic - a.heuristic)
+  const sorted = [...candidates].sort((a, b) => b.heuristic - a.heuristic)
+  const eliteCount = Math.min(Math.floor(cap * 0.75), sorted.length)
+  const selected = sorted.slice(0, eliteCount)
+  const remainder = sorted.slice(eliteCount)
+  const need = cap - selected.length
+  for (let index = 0; index < need && remainder.length; index++) {
+    const at = Math.floor(index * remainder.length / need)
+    selected.push(remainder[at])
+  }
+  return selected
+}
+
+function permutations<T>(values: T[]): T[][] {
+  const result: T[][] = []
+  const used = new Array(values.length).fill(false)
+  const current: T[] = []
+  const walk = () => {
+    if (current.length === values.length) {
+      result.push([...current])
+      return
+    }
+    for (let index = 0; index < values.length; index++) {
+      if (used[index]) continue
+      used[index] = true
+      current.push(values[index])
+      walk()
+      current.pop()
+      used[index] = false
+    }
+  }
+  walk()
+  return result
+}
+
+function validOrders(cards: TeamCard[], inventoryMap: Map<string, OwnedCard>): TeamCard[][] {
+  return permutations(cards).filter((order) => order.every((card, index) => {
+    const owned = inventoryMap.get(card.cardName)
+    return owned?.lockedPosition === null || owned?.lockedPosition === index
+  }))
+}
+
+function probeScore(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number): number {
+  const floors = [0.94, 1, 1.06].map((factor) => Math.max(1, Math.min(maxFloor, Math.round(center * factor))))
+  let score = 0
+  for (const floor of floors) {
+    const probe = probeFloor(loadout, floor, COMMON_SEEDS.slice(0, 3), runtime)
+    score += probe.wins * 1_000
+    score -= probe.averageTurns * 0.01
+  }
+  return score
+}
+
+function optimizeAuraAndOrder(
+  candidate: Candidate,
+  inventory: InventoryState,
+  inventoryMap: Map<string, OwnedCard>,
+  runtime: SearchRuntime,
+  maxFloor: number,
+): Candidate {
+  const statOptions = bestStatAuras(candidate.loadout.cards, auraOptions(inventory, 'stat'), 2)
+  const abilityOptions = auraOptions(inventory, 'ability')
+
+  const auraPairs: Array<{ statAura: AuraSelection | null; abilityAura: AuraSelection | null; score: number }> = []
+  for (const statAura of statOptions) {
+    for (const abilityAura of abilityOptions) {
+      const loadout: TeamLoadout = { cards: candidate.loadout.cards, statAura, abilityAura }
+      auraPairs.push({ statAura, abilityAura, score: probeScore(loadout, candidate.middleEstimate, runtime, maxFloor) })
+    }
+  }
+  auraPairs.sort((a, b) => b.score - a.score)
+  const bestPairs = auraPairs.slice(0, Math.min(2, auraPairs.length))
+
+  let bestLoadout = candidate.loadout
+  let bestScore = Number.NEGATIVE_INFINITY
+  const orders = validOrders(candidate.loadout.cards, inventoryMap)
+  for (const pair of bestPairs) {
+    for (const order of orders) {
+      const loadout: TeamLoadout = { cards: order, statAura: pair.statAura, abilityAura: pair.abilityAura }
+      const score = probeScore(loadout, candidate.middleEstimate, runtime, maxFloor)
+      if (score > bestScore) {
+        bestScore = score
+        bestLoadout = loadout
+      }
+    }
+  }
+
+  return { ...candidate, loadout: bestLoadout }
+}
+
+function metricStats(values: number[], trusted: boolean, unsupported: Set<string>): TeamMetrics {
+  const sorted = [...values].sort((a, b) => a - b)
+  const average = sorted.reduce((sum, value) => sum + value, 0) / Math.max(1, sorted.length)
+  const middle = Math.floor(sorted.length / 2)
+  const median = sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+  const variance = sorted.reduce((sum, value) => sum + Math.pow(value - average, 2), 0) / Math.max(1, sorted.length)
+  return {
+    averageDepth: average,
+    medianDepth: median,
+    minimumDepth: sorted[0] ?? 1,
+    maximumDepth: sorted[sorted.length - 1] ?? 1,
+    consistency: Math.sqrt(variance),
+    samples: sorted.length,
+    trusted,
+    unsupportedAbilities: [...unsupported].sort(),
+  }
+}
+
+function finalMetrics(
+  loadout: TeamLoadout,
+  center: number,
+  seedCount: number,
+  runtime: SearchRuntime,
+  maxFloor: number,
+): TeamMetrics {
+  const values: number[] = []
+  let trusted = true
+  const unsupported = new Set<string>()
+  for (let index = 0; index < seedCount; index++) {
+    const threshold = estimateThreshold(loadout, [COMMON_SEEDS[index % COMMON_SEEDS.length]], runtime, maxFloor, center, 5)
+    values.push(threshold.estimate)
+    trusted = trusted && threshold.trusted
+    for (const ability of threshold.unsupported) unsupported.add(ability)
+  }
+  return metricStats(values, trusted, unsupported)
+}
+
+function rankedId(loadout: TeamLoadout): string {
+  const cardsKey = loadout.cards.map((card) => `${card.cardName}:${card.borders.join('+')}`).join('|')
+  const stat = loadout.statAura ? `${loadout.statAura.auraName}:${loadout.statAura.border || 'Base'}` : '-'
+  const ability = loadout.abilityAura ? `${loadout.abilityAura.auraName}:${loadout.abilityAura.border || 'Base'}` : '-'
+  return `${cardsKey}::${stat}::${ability}`
+}
+
+export function searchBestTeams(
+  inventory: InventoryState,
+  settingsInput: Partial<SearchSettings> | undefined,
+  onProgress: (progress: OptimizerProgress) => void,
+): RankedTeam[] {
+  const settings = settingsWithDefaults(settingsInput)
+  const { validCards } = validateInventory(inventory)
+  const inventoryMap = new Map(validCards.map((card) => [card.cardName, card] as const))
+  const statOptions = auraOptions(inventory, 'stat')
+  auraOptions(inventory, 'ability')
+
+  const generated = generateTeamNameSets(inventory, settings.candidateCap)
+  const runtime: SearchRuntime = {
+    simulations: 0,
+    possibleCombinations: generated.possible,
+    quickTested: 0,
+    remainingCandidates: generated.sets.length,
+    finalists: 0,
+    fullySimulated: 0,
+    fullySimulatedTotal: 0,
+  }
+  emitProgress(runtime, 'prepare', onProgress, undefined, 'Preparing candidate teams')
+
+  let candidates = generated.sets.map((names): Candidate => {
+    const ordered = buildDefaultOrder(names, inventoryMap)
+    const statAura = bestStatAuras(ordered, statOptions, 1)[0] ?? null
+    const loadout: TeamLoadout = { cards: ordered, statAura, abilityAura: null }
+    return {
+      names,
+      loadout,
+      heuristic: rawLoadoutScore(ordered, statAura),
+      quickEstimate: 1,
+      middleEstimate: 1,
+      trusted: true,
+      unsupported: new Set<string>(),
+    }
+  })
+
+  candidates = preselectByHeuristic(candidates, settings.quickCandidateCap)
+  runtime.remainingCandidates = candidates.length
+  emitProgress(runtime, 'quick', onProgress, undefined, 'Quick adaptive search')
+
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index]
+    const threshold = estimateThreshold(candidate.loadout, COMMON_SEEDS.slice(0, 1), runtime, settings.maxFloor, undefined, 3)
+    candidate.quickEstimate = threshold.estimate
+    candidate.trusted = threshold.trusted
+    for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+    runtime.quickTested = index + 1
+    if (index % 12 === 0 || index + 1 === candidates.length) {
+      const best = [...candidates.slice(0, index + 1)].sort((a, b) => b.quickEstimate - a.quickEstimate)[0]
+      const currentBest = best ? {
+        id: rankedId(best.loadout),
+        loadout: best.loadout,
+        metrics: metricStats([best.quickEstimate], best.trusted, best.unsupported),
+        quickEstimate: best.quickEstimate,
+      } : undefined
+      emitProgress(runtime, 'quick', onProgress, currentBest)
+    }
+  }
+
+  candidates.sort((a, b) => b.quickEstimate - a.quickEstimate || b.heuristic - a.heuristic)
+  candidates = candidates.slice(0, Math.min(settings.middleCandidateCap, candidates.length))
+  runtime.remainingCandidates = candidates.length
+  emitProgress(runtime, 'middle', onProgress, undefined, 'Refining stronger candidates with shared seeds')
+
+  for (let index = 0; index < candidates.length; index++) {
+    const candidate = candidates[index]
+    const threshold = estimateThreshold(candidate.loadout, COMMON_SEEDS.slice(0, 3), runtime, settings.maxFloor, candidate.quickEstimate, 4)
+    candidate.middleEstimate = threshold.estimate
+    candidate.trusted = candidate.trusted && threshold.trusted
+    for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+    if (index % 8 === 0 || index + 1 === candidates.length) {
+      runtime.remainingCandidates = candidates.length - index - 1
+      emitProgress(runtime, 'middle', onProgress)
+    }
+  }
+
+  candidates.sort((a, b) => b.middleEstimate - a.middleEstimate || b.quickEstimate - a.quickEstimate)
+  const orderCandidates = candidates.slice(0, Math.min(24, candidates.length))
+  runtime.finalists = orderCandidates.length
+  emitProgress(runtime, 'order', onProgress, undefined, 'Optimizing auras and card order')
+
+  const optimized: Candidate[] = []
+  for (let index = 0; index < orderCandidates.length; index++) {
+    optimized.push(optimizeAuraAndOrder(orderCandidates[index], inventory, inventoryMap, runtime, settings.maxFloor))
+    runtime.finalists = orderCandidates.length - index - 1
+    emitProgress(runtime, 'order', onProgress)
+  }
+
+  const rechecked = optimized.map((candidate) => {
+    const threshold = estimateThreshold(candidate.loadout, COMMON_SEEDS.slice(0, 5), runtime, settings.maxFloor, candidate.middleEstimate, 4)
+    candidate.middleEstimate = threshold.estimate
+    candidate.trusted = candidate.trusted && threshold.trusted
+    for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+    return candidate
+  }).sort((a, b) => b.middleEstimate - a.middleEstimate)
+
+  const finalists = rechecked.slice(0, Math.min(settings.finalistCap, rechecked.length))
+  runtime.finalists = finalists.length
+  runtime.fullySimulated = 0
+  runtime.fullySimulatedTotal = finalists.length
+  emitProgress(runtime, 'final', onProgress, undefined, 'Running final shared-seed measurements')
+
+  const results: RankedTeam[] = []
+  for (let index = 0; index < finalists.length; index++) {
+    const candidate = finalists[index]
+    const metrics = finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, runtime, settings.maxFloor)
+    results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.quickEstimate })
+    runtime.fullySimulated = index + 1
+    const best = [...results].sort((a, b) => b.metrics.medianDepth - a.metrics.medianDepth)[0]
+    emitProgress(runtime, 'final', onProgress, best)
+  }
+
+  return results.sort((a, b) => b.metrics.averageDepth - a.metrics.averageDepth)
+}
+
+function bestOrderForReplacement(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number): TeamLoadout {
+  let best = loadout
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const order of permutations(loadout.cards)) {
+    const candidate = { ...loadout, cards: order }
+    const score = probeScore(candidate, center, runtime, maxFloor)
+    if (score > bestScore) {
+      bestScore = score
+      best = candidate
+    }
+  }
+  return best
+}
+
+export function searchReplacements(
+  inventory: InventoryState,
+  currentLoadout: TeamLoadout,
+  slot: 0 | 1 | 2 | 3,
+  settingsInput: Partial<SearchSettings> | undefined,
+  onProgress: (progress: OptimizerProgress) => void,
+): { baseline: TeamMetrics; results: ReplacementResult[] } {
+  const settings = settingsWithDefaults(settingsInput)
+  if (currentLoadout.cards.length !== 4) throw new Error('Build a complete 4-card current deck first.')
+  const { validCards } = validateInventory(inventory)
+  const currentNames = new Set(currentLoadout.cards.filter((_, index) => index !== slot).map((card) => card.cardName))
+  const choices = validCards.filter((card) => !currentNames.has(card.cardName) && card.cardName !== currentLoadout.cards[slot]?.cardName)
+  const runtime: SearchRuntime = {
+    simulations: 0,
+    possibleCombinations: choices.length,
+    quickTested: 0,
+    remainingCandidates: choices.length,
+    finalists: choices.length,
+    fullySimulated: 0,
+    fullySimulatedTotal: choices.length,
+  }
+
+  const baselineCenter = initialFloorGuess(currentLoadout, settings.maxFloor)
+  const baselineThreshold = estimateThreshold(currentLoadout, COMMON_SEEDS.slice(0, 5), runtime, settings.maxFloor, baselineCenter, 4)
+  const baseline = finalMetrics(currentLoadout, baselineThreshold.estimate, Math.min(7, settings.finalSeedCount), runtime, settings.maxFloor)
+  emitProgress(runtime, 'replacement', onProgress, undefined, 'Testing replacements')
+
+  const quick: Array<{ card: OwnedCard; loadout: TeamLoadout; estimate: number }> = []
+  for (let index = 0; index < choices.length; index++) {
+    const card = choices[index]
+    const cardsForDeck = currentLoadout.cards.map((existing, existingIndex) => existingIndex === slot ? ownedCardToTeamCard(card) : existing)
+    const base: TeamLoadout = { ...currentLoadout, cards: cardsForDeck }
+    const ordered = bestOrderForReplacement(base, baseline.medianDepth, runtime, settings.maxFloor)
+    const threshold = estimateThreshold(ordered, COMMON_SEEDS.slice(0, 3), runtime, settings.maxFloor, baseline.medianDepth, 3)
+    quick.push({ card, loadout: ordered, estimate: threshold.estimate })
+    runtime.quickTested = index + 1
+    runtime.remainingCandidates = choices.length - index - 1
+    if (index % 4 === 0 || index + 1 === choices.length) emitProgress(runtime, 'replacement', onProgress)
+  }
+
+  quick.sort((a, b) => b.estimate - a.estimate)
+  const finalists = quick.slice(0, Math.min(12, quick.length))
+  runtime.fullySimulatedTotal = finalists.length
+  runtime.fullySimulated = 0
+  const results: ReplacementResult[] = []
+  for (let index = 0; index < finalists.length; index++) {
+    const finalist = finalists[index]
+    const metrics = finalMetrics(finalist.loadout, finalist.estimate, Math.min(7, settings.finalSeedCount), runtime, settings.maxFloor)
+    results.push({
+      cardName: finalist.card.cardName,
+      loadout: finalist.loadout,
+      metrics,
+      medianDelta: metrics.medianDepth - baseline.medianDepth,
+    })
+    runtime.fullySimulated = index + 1
+    emitProgress(runtime, 'replacement', onProgress)
+  }
+
+  results.sort((a, b) => b.metrics.medianDepth - a.metrics.medianDepth)
+  return { baseline, results }
+}
