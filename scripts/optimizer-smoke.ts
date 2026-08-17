@@ -18,7 +18,7 @@ const inventory: InventoryState = {
   abilityAuras: [],
 }
 
-const results = searchBestTeams(inventory, {
+const results = await searchBestTeams(inventory, {
   candidateCap: 12,
   quickCandidateCap: 12,
   middleCandidateCap: 4,

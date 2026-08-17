@@ -14,7 +14,7 @@ import { auraSelection } from '../app-types'
 import type { AuraSelection, TeamCard, TeamLoadout } from '../types'
 import { createBattleStateV2, simulateBattleV2 } from '../engine/battle-v2'
 import { generateDepthsTeam } from '../engine/depths'
-import { simulateDepthsBatch } from '../engine/simulation'
+import { simulateDepthsBatch, type DepthsBatchOptions, type DepthsBatchResult } from '../engine/simulation'
 import { getPower } from '../engine/stats'
 import { cardVariantKey, canonicalBorders, teamCardVariantKey } from '../card-variants'
 
@@ -27,6 +27,8 @@ const MAX_EXHAUSTIVE_COMBINATIONS = 100_000
 const SMALL_SEARCH_MIDDLE_CAP = 600
 const SMALL_SEARCH_ORDER_CAP = 96
 const SMALL_SEARCH_FINALIST_CAP = 30
+
+export type ExactDepthsBatchRunner = (loadout: TeamLoadout, options: DepthsBatchOptions) => Promise<DepthsBatchResult>
 
 function makeSearchSeeds(count = SEARCH_SEED_POOL_SIZE): number[] {
   const size = Math.max(1, Math.floor(count))
@@ -534,23 +536,28 @@ function metricStats(values: number[], trusted: boolean, unsupported: Set<string
   }
 }
 
-function finalMetrics(
+async function finalMetrics(
   loadout: TeamLoadout,
   _center: number,
   seedCount: number,
   seeds: number[],
   runtime: SearchRuntime,
   maxFloor: number,
-): TeamMetrics {
-  // Final recommendations must measure actual Depths survival, not an isolated-floor
-  // power threshold. This is the same sequential batch used by the Depths calc:
-  // start at floor 1, generate each floor from the run seed, and stop at the first loss.
-  const batch = simulateDepthsBatch(loadout, {
+  exactBatchRunner?: ExactDepthsBatchRunner,
+): Promise<TeamMetrics> {
+  // Final recommendations still use the exact sequential Depths rules. In the browser,
+  // the optimizer worker can delegate the independent runs to the same parallel worker
+  // pool used by the Depths calculator, so accuracy is unchanged while CPU cores work
+  // on different runs at the same time.
+  const options: DepthsBatchOptions = {
     runs: seedCount,
     floorCap: maxFloor,
     seed: seeds[0] ?? 1,
     battleTurnCap: 10_000,
-  })
+  }
+  const batch = exactBatchRunner
+    ? await exactBatchRunner(loadout, options)
+    : simulateDepthsBatch(loadout, options)
   runtime.simulations += batch.runs.reduce((sum, run) => sum + run.battles, 0)
   return metricStats(
     batch.runs.map((run) => run.deathFloor),
@@ -574,11 +581,12 @@ function rankedId(loadout: TeamLoadout): string {
   return `${cardsKey}::${stat}::${ability}`
 }
 
-export function searchBestTeams(
+export async function searchBestTeams(
   inventory: InventoryState,
   settingsInput: Partial<SearchSettings> | undefined,
   onProgress: (progress: OptimizerProgress) => void,
-): RankedTeam[] {
+  exactBatchRunner?: ExactDepthsBatchRunner,
+): Promise<RankedTeam[]> {
   const settings = settingsWithDefaults(settingsInput)
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
   const { validCards } = validateInventory(inventory)
@@ -717,7 +725,7 @@ export function searchBestTeams(
   runtime.finalists = finalists.length
   runtime.fullySimulated = 0
   runtime.fullySimulatedTotal = finalists.length
-  emitProgress(runtime, 'final', onProgress, undefined, 'Running exact sequential Depths batches for finalists')
+  emitProgress(runtime, 'final', onProgress, undefined, 'Running parallel exact Depths batches for finalists')
 
   const results: RankedTeam[] = []
   for (let index = 0; index < finalists.length; index++) {
@@ -727,7 +735,7 @@ export function searchBestTeams(
     // gets its own fresh randomized Depths samples so it does not replay the same
     // enemy sequence as every other finalist.
     const finalistSeeds = makeSearchSeeds(settings.finalSeedCount)
-    const metrics = finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor)
+    const metrics = await finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor, exactBatchRunner)
     results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.quickEstimate })
     runtime.fullySimulated = index + 1
     const best = [...results].sort(compareRankedTeams)[0]
@@ -751,13 +759,14 @@ function bestOrderForReplacement(loadout: TeamLoadout, center: number, runtime: 
   return best
 }
 
-export function searchReplacements(
+export async function searchReplacements(
   inventory: InventoryState,
   currentLoadout: TeamLoadout,
   slot: 0 | 1 | 2 | 3,
   settingsInput: Partial<SearchSettings> | undefined,
   onProgress: (progress: OptimizerProgress) => void,
-): { baseline: TeamMetrics; results: ReplacementResult[] } {
+  exactBatchRunner?: ExactDepthsBatchRunner,
+): Promise<{ baseline: TeamMetrics; results: ReplacementResult[] }> {
   const settings = settingsWithDefaults(settingsInput)
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
   if (currentLoadout.cards.length !== 4) throw new Error('Build a complete 4-card current deck first.')
@@ -786,7 +795,7 @@ export function searchReplacements(
 
   const baselineCenter = initialFloorGuess(currentLoadout, settings.maxFloor)
   const baselineThreshold = estimateThreshold(currentLoadout, searchSeeds.slice(0, 5), runtime, settings.maxFloor, baselineCenter, 4)
-  const baseline = finalMetrics(currentLoadout, baselineThreshold.estimate, Math.min(7, settings.finalSeedCount), searchSeeds, runtime, settings.maxFloor)
+  const baseline = await finalMetrics(currentLoadout, baselineThreshold.estimate, Math.min(7, settings.finalSeedCount), searchSeeds, runtime, settings.maxFloor, exactBatchRunner)
   emitProgress(runtime, 'replacement', onProgress, undefined, 'Testing replacements')
 
   const quick: Array<{ card: OwnedCard; loadout: TeamLoadout; estimate: number }> = []
@@ -809,7 +818,7 @@ export function searchReplacements(
   const results: ReplacementResult[] = []
   for (let index = 0; index < finalists.length; index++) {
     const finalist = finalists[index]
-    const metrics = finalMetrics(finalist.loadout, finalist.estimate, Math.min(7, settings.finalSeedCount), searchSeeds, runtime, settings.maxFloor)
+    const metrics = await finalMetrics(finalist.loadout, finalist.estimate, Math.min(7, settings.finalSeedCount), searchSeeds, runtime, settings.maxFloor, exactBatchRunner)
     results.push({
       cardName: finalist.card.cardName,
       borders: canonicalBorders(finalist.card.borders),
