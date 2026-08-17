@@ -9,4 +9,6 @@ assert.ok(app.includes('private renderAuras()'), 'Dedicated Auras page is missin
 assert.ok(!app.includes('<section class="aura-inventory-panel">'), 'Aura catalog should not remain inside the right inventory panel')
 assert.ok(app.includes("const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']"), 'Aura border choices must be Base/P/C/G only')
 assert.ok(css.includes('repeat(4') && css.includes('.aura-workspace .aura-columns'), 'Aura workspace layout CSS is missing')
+assert.ok(app.includes('<div class="aura-card-grid">'), 'Aura cards must render inside dedicated packed grids')
+assert.ok(css.includes('.aura-workspace .aura-card-grid'), 'Packed aura card grid CSS marker is missing')
 console.log('aura workspace regression passed')

@@ -22,5 +22,5 @@ assert.ok(styles.includes('.workspace-layout') && styles.includes('.inventory-si
 assert.ok(styles.includes('.pool-catalog-grid') && styles.includes('.pool-border-picker'), 'Pool catalog styling is missing')
 assert.ok(styles.includes('compact-card-layout'), 'Compact inventory/aura card layout marker is missing')
 assert.ok(styles.includes('.inventory-variant-list{grid-template-columns:repeat(2,minmax(0,1fr))'), 'Owned inventory should render side-by-side cards')
-assert.ok(styles.includes('.aura-workspace .aura-column{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))'), 'Aura catalog should render normal card-sized tiles')
+assert.ok(styles.includes('.aura-workspace .aura-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))'), 'Aura catalog should render normal card-sized tiles in a packed card grid')
 console.log('workspace regression passed')

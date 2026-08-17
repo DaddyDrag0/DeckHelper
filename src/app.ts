@@ -292,11 +292,11 @@ export class DeckHelperApp {
         <div class="aura-columns">
           <div class="aura-column">
             <div class="aura-column-head"><strong>Stat Auras</strong><span>${this.state.inventory.statAuras.length} owned</span></div>
-            ${visible.filter((aura) => aura.type === 'Stat').map((aura) => this.renderInventoryAura(aura.name, 'stat')).join('')}
+            <div class="aura-card-grid">${visible.filter((aura) => aura.type === 'Stat').map((aura) => this.renderInventoryAura(aura.name, 'stat')).join('')}</div>
           </div>
           <div class="aura-column">
             <div class="aura-column-head"><strong>Ability Auras</strong><span>${this.state.inventory.abilityAuras.length} owned</span></div>
-            ${visible.filter((aura) => aura.type === 'Skill').map((aura) => this.renderInventoryAura(aura.name, 'ability')).join('')}
+            <div class="aura-card-grid">${visible.filter((aura) => aura.type === 'Skill').map((aura) => this.renderInventoryAura(aura.name, 'ability')).join('')}</div>
           </div>
         </div>
       </section>

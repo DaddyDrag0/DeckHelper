@@ -114,11 +114,11 @@
         <div class="aura-columns">
           <div class="aura-column">
             <div class="aura-column-head"><strong>Stat Auras</strong><span>${this.state.inventory.statAuras.length} owned</span></div>
-            ${t.filter(e=>e.type===`Stat`).map(e=>this.renderInventoryAura(e.name,`stat`)).join(``)}
+            <div class="aura-card-grid">${t.filter(e=>e.type===`Stat`).map(e=>this.renderInventoryAura(e.name,`stat`)).join(``)}</div>
           </div>
           <div class="aura-column">
             <div class="aura-column-head"><strong>Ability Auras</strong><span>${this.state.inventory.abilityAuras.length} owned</span></div>
-            ${t.filter(e=>e.type===`Skill`).map(e=>this.renderInventoryAura(e.name,`ability`)).join(``)}
+            <div class="aura-card-grid">${t.filter(e=>e.type===`Skill`).map(e=>this.renderInventoryAura(e.name,`ability`)).join(``)}</div>
           </div>
         </div>
       </section>
