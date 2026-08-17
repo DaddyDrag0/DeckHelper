@@ -27,6 +27,11 @@ const MAX_EXHAUSTIVE_COMBINATIONS = 100_000
 const SMALL_SEARCH_MIDDLE_CAP = 600
 const SMALL_SEARCH_ORDER_CAP = 96
 const SMALL_SEARCH_FINALIST_CAP = 30
+const FAST_QUICK_TRIALS = 2
+const FAST_SEARCH_MIDDLE_CAP = 240
+const FAST_SEARCH_ORDER_CAP = 40
+const FAST_SEARCH_FINALIST_CAP = 10
+const FAST_FINAL_SEED_COUNT = 5
 
 export type ExactDepthsBatchRunner = (loadout: TeamLoadout, options: DepthsBatchOptions) => Promise<DepthsBatchResult>
 
@@ -43,6 +48,7 @@ function makeSearchSeeds(count = SEARCH_SEED_POOL_SIZE): number[] {
 }
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
+  mode: 'full',
   candidateCap: MAX_EXHAUSTIVE_COMBINATIONS,
   quickCandidateCap: 1_000,
   middleCandidateCap: 120,
@@ -89,12 +95,15 @@ interface SearchRuntime {
 }
 
 function settingsWithDefaults(settings?: Partial<SearchSettings>): SearchSettings {
+  const mode = settings?.mode === 'fast' ? 'fast' : 'full'
+  const defaultFinalSeeds = mode === 'fast' ? FAST_FINAL_SEED_COUNT : DEFAULT_SEARCH_SETTINGS.finalSeedCount
   return {
+    mode,
     candidateCap: Math.max(100, Math.floor(settings?.candidateCap ?? DEFAULT_SEARCH_SETTINGS.candidateCap)),
     quickCandidateCap: Math.max(20, Math.floor(settings?.quickCandidateCap ?? DEFAULT_SEARCH_SETTINGS.quickCandidateCap)),
     middleCandidateCap: Math.max(10, Math.floor(settings?.middleCandidateCap ?? DEFAULT_SEARCH_SETTINGS.middleCandidateCap)),
     finalistCap: Math.max(3, Math.floor(settings?.finalistCap ?? DEFAULT_SEARCH_SETTINGS.finalistCap)),
-    finalSeedCount: Math.max(3, Math.floor(settings?.finalSeedCount ?? DEFAULT_SEARCH_SETTINGS.finalSeedCount)) | 1,
+    finalSeedCount: Math.max(3, Math.floor(settings?.finalSeedCount ?? defaultFinalSeeds)) | 1,
     maxFloor: Math.max(100, Math.floor(settings?.maxFloor ?? DEFAULT_SEARCH_SETTINGS.maxFloor)),
   }
 }
@@ -566,6 +575,27 @@ async function finalMetrics(
   )
 }
 
+
+function approximateFinalMetrics(
+  loadout: TeamLoadout,
+  center: number,
+  seedCount: number,
+  seeds: number[],
+  runtime: SearchRuntime,
+  maxFloor: number,
+): TeamMetrics {
+  const values: number[] = []
+  let trusted = true
+  const unsupported = new Set<string>()
+  for (let index = 0; index < seedCount; index++) {
+    const threshold = estimateThreshold(loadout, [seeds[index % seeds.length]], runtime, maxFloor, center, 4)
+    values.push(threshold.estimate)
+    trusted = trusted && threshold.trusted
+    for (const ability of threshold.unsupported) unsupported.add(ability)
+  }
+  return metricStats(values, trusted, unsupported)
+}
+
 function compareRankedTeams(a: RankedTeam, b: RankedTeam): number {
   return b.metrics.medianDepth - a.metrics.medianDepth
     || b.metrics.averageDepth - a.metrics.averageDepth
@@ -588,6 +618,8 @@ export async function searchBestTeams(
   exactBatchRunner?: ExactDepthsBatchRunner,
 ): Promise<RankedTeam[]> {
   const settings = settingsWithDefaults(settingsInput)
+  const fastMode = settings.mode === 'fast'
+  const quickTrials = fastMode ? FAST_QUICK_TRIALS : QUICK_TRIALS
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
   const { validCards } = validateInventory(inventory)
   const inventoryMap = new Map(validCards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
@@ -631,13 +663,13 @@ export async function searchBestTeams(
     'quick',
     onProgress,
     undefined,
-    `Testing all ${generated.possible.toLocaleString()} team combinations × ${QUICK_TRIALS} random quick trials`,
+    `Testing all ${generated.possible.toLocaleString()} team combinations × ${quickTrials} random quick trials${fastMode ? ' (Fast)' : ''}`,
   )
 
   for (let index = 0; index < candidates.length; index++) {
     const candidate = candidates[index]
     const quickValues: number[] = []
-    for (let trial = 0; trial < QUICK_TRIALS; trial++) {
+    for (let trial = 0; trial < quickTrials; trial++) {
       const threshold = estimateThreshold(
         candidate.loadout,
         [searchSeeds[trial % searchSeeds.length]],
@@ -679,7 +711,7 @@ export async function searchBestTeams(
     || b.heuristic - a.heuristic
   )
   const middleCandidateCap = exhaustiveQuick
-    ? Math.max(settings.middleCandidateCap, SMALL_SEARCH_MIDDLE_CAP)
+    ? Math.max(settings.middleCandidateCap, fastMode ? FAST_SEARCH_MIDDLE_CAP : SMALL_SEARCH_MIDDLE_CAP)
     : settings.middleCandidateCap
   candidates = candidates.slice(0, Math.min(middleCandidateCap, candidates.length))
   runtime.remainingCandidates = candidates.length
@@ -698,7 +730,7 @@ export async function searchBestTeams(
   }
 
   candidates.sort((a, b) => b.middleEstimate - a.middleEstimate || b.quickEstimate - a.quickEstimate)
-  const orderCandidateCap = exhaustiveQuick ? SMALL_SEARCH_ORDER_CAP : 24
+  const orderCandidateCap = exhaustiveQuick ? (fastMode ? FAST_SEARCH_ORDER_CAP : SMALL_SEARCH_ORDER_CAP) : 24
   const orderCandidates = candidates.slice(0, Math.min(orderCandidateCap, candidates.length))
   runtime.finalists = orderCandidates.length
   emitProgress(runtime, 'order', onProgress, undefined, 'Optimizing auras and card order')
@@ -719,13 +751,13 @@ export async function searchBestTeams(
   }).sort((a, b) => b.middleEstimate - a.middleEstimate)
 
   const finalistCap = exhaustiveQuick
-    ? Math.max(settings.finalistCap, SMALL_SEARCH_FINALIST_CAP)
+    ? Math.max(settings.finalistCap, fastMode ? FAST_SEARCH_FINALIST_CAP : SMALL_SEARCH_FINALIST_CAP)
     : settings.finalistCap
   const finalists = rechecked.slice(0, Math.min(finalistCap, rechecked.length))
   runtime.finalists = finalists.length
   runtime.fullySimulated = 0
   runtime.fullySimulatedTotal = finalists.length
-  emitProgress(runtime, 'final', onProgress, undefined, 'Running parallel exact Depths batches for finalists')
+  emitProgress(runtime, 'final', onProgress, undefined, fastMode ? 'Running fast approximate finalist checks' : 'Running parallel exact Depths batches for finalists')
 
   const results: RankedTeam[] = []
   for (let index = 0; index < finalists.length; index++) {
@@ -735,7 +767,9 @@ export async function searchBestTeams(
     // gets its own fresh randomized Depths samples so it does not replay the same
     // enemy sequence as every other finalist.
     const finalistSeeds = makeSearchSeeds(settings.finalSeedCount)
-    const metrics = await finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor, exactBatchRunner)
+    const metrics = fastMode
+      ? approximateFinalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor)
+      : await finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor, exactBatchRunner)
     results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.quickEstimate })
     runtime.fullySimulated = index + 1
     const best = [...results].sort(compareRankedTeams)[0]

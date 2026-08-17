@@ -1,6 +1,7 @@
 import type { AuraBorderName, AuraSelection, BorderName, TeamLoadout } from './types'
 
 export type DeckSlot = 0 | 1 | 2 | 3
+export type SearchMode = 'fast' | 'full'
 export type AuraOwnedBorder = 'Base' | AuraBorderName
 
 export interface OwnedCard {
@@ -63,6 +64,7 @@ export interface ReplacementResult {
 }
 
 export interface SearchSettings {
+  mode: SearchMode
   candidateCap: number
   quickCandidateCap: number
   middleCandidateCap: number

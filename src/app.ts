@@ -41,6 +41,7 @@ export class DeckHelperApp {
   private replacementBaseline: TeamMetrics | null = null
   private replacementSlot: DeckSlot | null = null
   private error = ''
+  private searchMode: 'fast' | 'full' = 'full'
 
   constructor(private root: HTMLElement) {
     this.syncCurrentDeck()
@@ -336,7 +337,7 @@ export class DeckHelperApp {
     return `
       <section class="page-head split">
         <div><span class="eyebrow">Battle simulator search</span><h2>Optimize</h2><p>All exact variants and quantities in Your Inventory are considered. Pool is only the catalog used to build your inventory.</p></div>
-        <div class="actions">${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button class="primary" data-action="start-search" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Find Best 4-Card Teams</button>`}</div>
+        <div class="actions search-mode-actions">${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button data-action="start-search-fast" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Fast Search</button><button class="primary" data-action="start-search-full" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Full Depths Search</button><small>Fast = approximate / lighter · Full = 15 real Depths runs per finalist</small>`}</div>
       </section>
       <section class="optimizer-pool-preview panel-soft">
         <div><strong>Your Inventory</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0)} copies · ${searchInventory.cards.length} exact variants</span></div>
@@ -349,7 +350,7 @@ export class DeckHelperApp {
       </section>
       ${this.progress ? this.renderProgress(this.progress) : ''}
       ${this.results.length ? `
-        <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>Unranked shortlist · export to Depths for detailed testing</span></section>
+        <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>${this.searchMode === 'fast' ? 'Fast approximate shortlist · export to Depths for proper testing' : 'Full Depths shortlist · export to Depths for further testing'}</span></section>
         <section class="result-list">${sorted.map((result) => this.renderResult(result)).join('')}</section>
       ` : `<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Your Inventory needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Drag cards from Pool into Your Inventory on the right.' : 'Start the search when you are ready.'}</span></section>`}
     `
@@ -359,9 +360,9 @@ export class DeckHelperApp {
     const phaseLabel: Record<OptimizerProgress['phase'], string> = {
       prepare: 'Preparing candidates', quick: 'Quick testing', middle: 'Refining candidates', order: 'Optimizing order + auras', final: 'Final simulations', replacement: 'Testing replacements',
     }
-    const currentBestMetric = progress.phase === 'final' || progress.phase === 'replacement'
+    const currentBestMetric = (progress.phase === 'final' || progress.phase === 'replacement') && this.searchMode === 'full'
       ? `Depths median ${formatNumber(progress.currentBest?.metrics.medianDepth ?? 0)}`
-      : `Quick power estimate ~ ${formatNumber(progress.currentBest?.metrics.medianDepth ?? 0)}`
+      : `${this.searchMode === 'fast' && progress.phase === 'final' ? 'Approx. power estimate' : 'Quick power estimate'} ~ ${formatNumber(progress.currentBest?.metrics.medianDepth ?? 0)}`
     return `
       <section class="progress-card panel">
         <div class="progress-title"><strong>${phaseLabel[progress.phase]}</strong><span>${escapeHtml(progress.message || '')}</span></div>
@@ -543,7 +544,8 @@ export class DeckHelperApp {
     else if (action === 'aura-border-choice') this.chooseAuraBorder(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder)
     else if (action === 'add-aura') this.addAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder)
     else if (action === 'remove-aura') this.removeAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
-    else if (action === 'start-search') this.startSearch()
+    else if (action === 'start-search-fast') this.startSearch('fast')
+    else if (action === 'start-search-full') this.startSearch('full')
     else if (action === 'cancel-search') this.cancelWorker()
     else if (action === 'export-result') this.exportResult(target.dataset.result || '')
     else if (action === 'save-result') this.saveResult(target.dataset.result || '')
@@ -808,17 +810,18 @@ export class DeckHelperApp {
     this.persist(); this.render()
   }
 
-  private startSearch() {
+  private startSearch(mode: 'fast' | 'full') {
     this.error = ''
     this.results = []
     this.progress = null
+    this.searchMode = mode
     this.tab = 'optimize'
     if (this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4) {
       this.error = 'Add at least 4 owned copies to Your Inventory before optimizing.'
       this.render()
       return
     }
-    this.runWorker({ kind: 'search', inventory: structuredClone(this.state.inventory) })
+    this.runWorker({ kind: 'search', inventory: structuredClone(this.state.inventory), settings: { mode } })
   }
 
   private startReplacement(slot: DeckSlot) {
