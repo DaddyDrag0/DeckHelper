@@ -7,7 +7,7 @@
           </div>
           <div class="top-stats">
             <span><b>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)}</b> owned copies</span>
-            <span><b>${this.poolCatalogCards().length}</b> pool cards</span>
+            <span><b>${this.poolCatalogCards().length}</b> cards available</span>
             <span><b>${this.state.favorites.length}</b> saved decks</span>
           </div>
         </header>
@@ -15,9 +15,9 @@
         <main class="workspace-layout">
           <section class="workspace-left">
             <nav class="workspace-tabs">
-              ${this.tabButton(`pool`,`Pool`)}
+              ${this.tabButton(`pool`,`Cards`)}
               ${this.tabButton(`auras`,`Auras`)}
-              ${this.tabButton(`optimize`,`Optimize`)}
+              ${this.tabButton(`optimize`,`Helper`)}
               ${this.tabButton(`decks`,`Saved Decks`)}
             </nav>
             <div class="workspace-content">${e}</div>
@@ -35,8 +35,8 @@
     `}renderInventory(){let e=this.cardSearch.trim().toLowerCase(),t=[...this.state.inventory.cards].filter(t=>{let n=s.find(e=>e.name===t.cardName);return!e||t.cardName.toLowerCase().includes(e)||(n?.ability||``).toLowerCase().includes(e)||Y(t.borders).toLowerCase().includes(e)}).sort((e,t)=>e.cardName.localeCompare(t.cardName)||p(e.borders).localeCompare(p(t.borders)));return`
       <div class="inventory-side-head">
         <div><span class="eyebrow">Drop destination</span><h2>Your Inventory</h2></div>
-        <p>Drag cards from Pool into this panel. Each exact border combination is stored separately; dropping the same variant again increases its quantity.</p>
-        <div class="inventory-drop-hint">Drop Pool cards anywhere in this panel</div>
+        <p>Drag cards from the Cards tab into this panel. Each exact border combination is stored separately; dropping the same variant again increases its quantity.</p>
+        <div class="inventory-drop-hint">Drop Cards-tab cards anywhere in this panel</div>
       </div>
       <details class="inventory-code-panel">
         <summary>Inventory Code <span>backup / transfer</span></summary>
@@ -97,16 +97,16 @@
       </article>
     `}renderPool(){let e=this.filteredPoolCards(),t=this.poolCatalogCards().length;return`
       <section class="page-head split">
-        <div><span class="eyebrow">Game card catalog</span><h2>Pool</h2><p>All obtainable cards are here, plus Conqueror. Pick P / C / R / G on a card, then drag it into Your Inventory. No borders selected means Base.</p></div>
+        <div><h2>Cards</h2></div>
       </section>
       <section class="panel pool-catalog">
-        <label class="pool-search"><span>Search Pool</span><input id="pool-search" value="${W(this.poolSearch)}" placeholder="Card name, ability, weather, or pack"></label>
-        <div class="pool-catalog-summary"><strong>${e.length}</strong><span>of ${t} Pool cards shown</span><em>Border selection changes the card frame before you drag it.</em></div>
+        <label class="pool-search"><span>Search Cards</span><input id="pool-search" value="${W(this.poolSearch)}" placeholder="Card name, ability, weather, or pack"></label>
+        <div class="pool-catalog-summary"><strong>${e.length}</strong><span>of ${t} cards shown</span><em>Border selection changes the card frame before you drag it.</em></div>
         <div class="pool-catalog-grid">${e.map(e=>this.renderPoolCard(e)).join(``)}</div>
       </section>
     `}renderAuras(){let e=this.auraSearch.trim().toLowerCase(),t=b.filter(t=>!e||t.name.toLowerCase().includes(e)||(t.skillName||``).toLowerCase().includes(e)),n=this.state.inventory.statAuras.length+this.state.inventory.abilityAuras.length;return`
       <section class="page-head split">
-        <div><span class="eyebrow">Aura catalog</span><h2>Auras</h2><p>Select the one aura border you own, then add it to Your Inventory. Aura borders never stack and only use Base, Platinum, Crystal, or Galaxy.</p></div>
+        <div><h2>Auras</h2></div>
       </section>
       <section class="panel aura-workspace">
         <label class="inventory-search aura-workspace-search"><span>Search Auras</span><input id="aura-search" value="${W(this.auraSearch)}" placeholder="Aura name or skill"></label>
@@ -137,7 +137,7 @@
       </article>
     `}renderOptimize(){let e=this.state.inventory,t=e.cards.filter(e=>e.locked||e.lockedPosition!==null),n=e.statAuras.find(e=>e.locked),r=e.abilityAuras.find(e=>e.locked),i=this.recommendedResults();return`
       <section class="page-head split">
-        <div><span class="eyebrow">Battle simulator search</span><h2>Optimize</h2><p>All exact variants and quantities in Your Inventory are considered. Pool is only the catalog used to build your inventory.</p></div>
+        <div><h2>Helper</h2></div>
         <div class="actions search-mode-actions">${this.worker?`<button class="danger" data-action="cancel-search">Cancel Search</button>`:`<button data-action="start-search-fast" ${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`disabled`:``}>Fast Search</button><button class="primary" data-action="start-search-full" ${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`disabled`:``}>Full Depths Search</button><small>Fast = approximate / lighter · Full = 15 real Depths runs per finalist</small>`}</div>
       </section>
       <section class="optimizer-pool-preview panel-soft">
@@ -153,7 +153,7 @@
       ${this.results.length?`
         <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>${this.searchMode===`fast`?`Fast approximate shortlist · export to Depths for proper testing`:`Full Depths shortlist · export to Depths for further testing`}</span></section>
         <section class="result-list">${i.map(e=>this.renderResult(e)).join(``)}</section>
-      `:`<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`Your Inventory needs at least 4 copies.`:`No optimizer results yet.`}</strong><span>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`Drag cards from Pool into Your Inventory on the right.`:`Start the search when you are ready.`}</span></section>`}
+      `:`<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`Your Inventory needs at least 4 copies.`:`No optimizer results yet.`}</strong><span>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`Drag cards from the Cards tab into Your Inventory on the right.`:`Start the search when you are ready.`}</span></section>`}
     `}renderProgress(e){let t={prepare:`Preparing candidates`,quick:`Quick testing`,middle:`Refining candidates`,order:`Optimizing order + auras`,final:`Final simulations`,replacement:`Testing replacements`},n=(e.phase===`final`||e.phase===`replacement`)&&this.searchMode===`full`?`Depths median ${G(e.currentBest?.metrics.medianDepth??0)}`:`${this.searchMode===`fast`&&e.phase===`final`?`Approx. power estimate`:`Quick power estimate`} ~ ${G(e.currentBest?.metrics.medianDepth??0)}`;return`
       <section class="progress-card panel">
         <div class="progress-title"><strong>${t[e.phase]}</strong><span>${W(e.message||``)}</span></div>

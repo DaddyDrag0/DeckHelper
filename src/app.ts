@@ -97,7 +97,7 @@ export class DeckHelperApp {
           </div>
           <div class="top-stats">
             <span><b>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0)}</b> owned copies</span>
-            <span><b>${this.poolCatalogCards().length}</b> pool cards</span>
+            <span><b>${this.poolCatalogCards().length}</b> cards available</span>
             <span><b>${this.state.favorites.length}</b> saved decks</span>
           </div>
         </header>
@@ -105,9 +105,9 @@ export class DeckHelperApp {
         <main class="workspace-layout">
           <section class="workspace-left">
             <nav class="workspace-tabs">
-              ${this.tabButton('pool', 'Pool')}
+              ${this.tabButton('pool', 'Cards')}
               ${this.tabButton('auras', 'Auras')}
-              ${this.tabButton('optimize', 'Optimize')}
+              ${this.tabButton('optimize', 'Helper')}
               ${this.tabButton('decks', 'Saved Decks')}
             </nav>
             <div class="workspace-content">${workspace}</div>
@@ -160,8 +160,8 @@ export class DeckHelperApp {
     return `
       <div class="inventory-side-head">
         <div><span class="eyebrow">Drop destination</span><h2>Your Inventory</h2></div>
-        <p>Drag cards from Pool into this panel. Each exact border combination is stored separately; dropping the same variant again increases its quantity.</p>
-        <div class="inventory-drop-hint">Drop Pool cards anywhere in this panel</div>
+        <p>Drag cards from the Cards tab into this panel. Each exact border combination is stored separately; dropping the same variant again increases its quantity.</p>
+        <div class="inventory-drop-hint">Drop Cards-tab cards anywhere in this panel</div>
       </div>
       <details class="inventory-code-panel">
         <summary>Inventory Code <span>backup / transfer</span></summary>
@@ -268,11 +268,11 @@ export class DeckHelperApp {
     const total = this.poolCatalogCards().length
     return `
       <section class="page-head split">
-        <div><span class="eyebrow">Game card catalog</span><h2>Pool</h2><p>All obtainable cards are here, plus Conqueror. Pick P / C / R / G on a card, then drag it into Your Inventory. No borders selected means Base.</p></div>
+        <div><h2>Cards</h2></div>
       </section>
       <section class="panel pool-catalog">
-        <label class="pool-search"><span>Search Pool</span><input id="pool-search" value="${escapeHtml(this.poolSearch)}" placeholder="Card name, ability, weather, or pack"></label>
-        <div class="pool-catalog-summary"><strong>${visible.length}</strong><span>of ${total} Pool cards shown</span><em>Border selection changes the card frame before you drag it.</em></div>
+        <label class="pool-search"><span>Search Cards</span><input id="pool-search" value="${escapeHtml(this.poolSearch)}" placeholder="Card name, ability, weather, or pack"></label>
+        <div class="pool-catalog-summary"><strong>${visible.length}</strong><span>of ${total} cards shown</span><em>Border selection changes the card frame before you drag it.</em></div>
         <div class="pool-catalog-grid">${visible.map((card) => this.renderPoolCard(card)).join('')}</div>
       </section>
     `
@@ -284,7 +284,7 @@ export class DeckHelperApp {
     const ownedCount = this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length
     return `
       <section class="page-head split">
-        <div><span class="eyebrow">Aura catalog</span><h2>Auras</h2><p>Select the one aura border you own, then add it to Your Inventory. Aura borders never stack and only use Base, Platinum, Crystal, or Galaxy.</p></div>
+        <div><h2>Auras</h2></div>
       </section>
       <section class="panel aura-workspace">
         <label class="inventory-search aura-workspace-search"><span>Search Auras</span><input id="aura-search" value="${escapeHtml(this.auraSearch)}" placeholder="Aura name or skill"></label>
@@ -336,7 +336,7 @@ export class DeckHelperApp {
     const sorted = this.recommendedResults()
     return `
       <section class="page-head split">
-        <div><span class="eyebrow">Battle simulator search</span><h2>Optimize</h2><p>All exact variants and quantities in Your Inventory are considered. Pool is only the catalog used to build your inventory.</p></div>
+        <div><h2>Helper</h2></div>
         <div class="actions search-mode-actions">${this.worker ? `<button class="danger" data-action="cancel-search">Cancel Search</button>` : `<button data-action="start-search-fast" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Fast Search</button><button class="primary" data-action="start-search-full" ${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'disabled' : ''}>Full Depths Search</button><small>Fast = approximate / lighter · Full = 15 real Depths runs per finalist</small>`}</div>
       </section>
       <section class="optimizer-pool-preview panel-soft">
@@ -352,7 +352,7 @@ export class DeckHelperApp {
       ${this.results.length ? `
         <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>${this.searchMode === 'fast' ? 'Fast approximate shortlist · export to Depths for proper testing' : 'Full Depths shortlist · export to Depths for further testing'}</span></section>
         <section class="result-list">${sorted.map((result) => this.renderResult(result)).join('')}</section>
-      ` : `<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Your Inventory needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Drag cards from Pool into Your Inventory on the right.' : 'Start the search when you are ready.'}</span></section>`}
+      ` : `<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Your Inventory needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Drag cards from the Cards tab into Your Inventory on the right.' : 'Start the search when you are ready.'}</span></section>`}
     `
   }
 
