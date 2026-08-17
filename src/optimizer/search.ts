@@ -21,7 +21,8 @@ const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
 const AURA_BY_NAME = new Map(auras.map((aura) => [aura.name, aura] as const))
 
 const SEARCH_SEED_POOL_SIZE = 32
-const FULL_QUICK_SCAN_LIMIT = 5_000
+const QUICK_TRIALS = 5
+const MAX_EXHAUSTIVE_COMBINATIONS = 100_000
 const SMALL_SEARCH_MIDDLE_CAP = 300
 const SMALL_SEARCH_ORDER_CAP = 48
 const SMALL_SEARCH_FINALIST_CAP = 20
@@ -39,7 +40,7 @@ function makeSearchSeeds(count = SEARCH_SEED_POOL_SIZE): number[] {
 }
 
 export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
-  candidateCap: 20_000,
+  candidateCap: MAX_EXHAUSTIVE_COMBINATIONS,
   quickCandidateCap: 1_000,
   middleCandidateCap: 120,
   finalistCap: 10,
@@ -399,30 +400,17 @@ function generateTeamNameSets(inventory: InventoryState, cap: number): { sets: s
   if (need === 0) return { sets: [locked.map((card) => cardVariantKey(card.cardName, card.borders))], possible: 1 }
 
   const ranked = [...selectable].sort((a, b) => cardRawScore(b.card) - cardRawScore(a.card))
-  if (possible <= cap) {
-    enumerateMultisets(ranked, need, cap, add)
-    return { sets, possible }
+  if (possible > cap) {
+    throw new Error(
+      `Your inventory has ${possible.toLocaleString()} possible teams. DeckHelper now requires an exhaustive search and will not silently skip combinations. `
+      + `The current exhaustive limit is ${cap.toLocaleString()}; reduce the inventory or lock cards to narrow the search.`,
+    )
   }
 
-  const eliteBudget = Math.max(1, Math.floor(cap * 0.7))
-  enumerateMultisets(ranked, need, eliteBudget, add)
-
-  const tokenPool = ranked.flatMap((entry) => Array.from({ length: Math.min(entry.capacity, need) }, () => entry.card))
-  const totalCopies = validCards.reduce((sum, card) => sum + card.quantity, 0)
-  const random = xorshift(0xdecafbad ^ totalCopies)
-  let attempts = 0
-  while (sets.length < cap && attempts++ < cap * 50) {
-    const picked: OwnedCard[] = []
-    const used = new Set<number>()
-    while (picked.length < need && used.size < tokenPool.length) {
-      const index = Math.floor(random() * tokenPool.length)
-      if (used.has(index)) continue
-      used.add(index)
-      picked.push(tokenPool[index])
-    }
-    add(picked)
+  enumerateMultisets(ranked, need, possible, add)
+  if (sets.length !== possible) {
+    throw new Error(`Exhaustive candidate generation expected ${possible.toLocaleString()} teams but produced ${sets.length.toLocaleString()}.`)
   }
-
   return { sets, possible }
 }
 
@@ -609,24 +597,34 @@ export function searchBestTeams(
     }
   })
 
-  const exhaustiveQuick = generated.possible <= FULL_QUICK_SCAN_LIMIT && generated.sets.length === generated.possible
-  const quickCandidateCap = exhaustiveQuick ? candidates.length : settings.quickCandidateCap
-  candidates = preselectByHeuristic(candidates, quickCandidateCap)
+  const exhaustiveQuick = generated.sets.length === generated.possible
+  if (!exhaustiveQuick) throw new Error('Optimizer candidate generation was not exhaustive.')
   runtime.remainingCandidates = candidates.length
   emitProgress(
     runtime,
     'quick',
     onProgress,
     undefined,
-    exhaustiveQuick ? `Testing all ${generated.possible.toLocaleString()} team combinations` : 'Quick adaptive search',
+    `Testing all ${generated.possible.toLocaleString()} team combinations × ${QUICK_TRIALS} random quick trials`,
   )
 
   for (let index = 0; index < candidates.length; index++) {
     const candidate = candidates[index]
-    const threshold = estimateThreshold(candidate.loadout, searchSeeds.slice(0, 1), runtime, settings.maxFloor, undefined, 3)
-    candidate.quickEstimate = threshold.estimate
-    candidate.trusted = threshold.trusted
-    for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+    let bestQuickEstimate = 1
+    for (let trial = 0; trial < QUICK_TRIALS; trial++) {
+      const threshold = estimateThreshold(
+        candidate.loadout,
+        [searchSeeds[trial % searchSeeds.length]],
+        runtime,
+        settings.maxFloor,
+        undefined,
+        3,
+      )
+      bestQuickEstimate = Math.max(bestQuickEstimate, threshold.estimate)
+      candidate.trusted = candidate.trusted && threshold.trusted
+      for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+    }
+    candidate.quickEstimate = bestQuickEstimate
     runtime.quickTested = index + 1
     if (index % 12 === 0 || index + 1 === candidates.length) {
       const best = [...candidates.slice(0, index + 1)].sort((a, b) => b.quickEstimate - a.quickEstimate)[0]
