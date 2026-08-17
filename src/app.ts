@@ -23,12 +23,10 @@ const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
 
 type Tab = 'pool' | 'auras' | 'optimize' | 'decks'
-type Ranking = 'average' | 'median' | 'minimum' | 'maximum' | 'consistency'
 
 export class DeckHelperApp {
   private state: AppState = loadState()
   private tab: Tab = 'pool'
-  private ranking: Ranking = 'average'
   private cardSearch = ''
   private poolSearch = ''
   private poolBorders = new Map<string, BorderName[]>()
@@ -334,7 +332,7 @@ export class DeckHelperApp {
     const lockedCards = searchInventory.cards.filter((card) => card.locked || card.lockedPosition !== null)
     const lockedStat = searchInventory.statAuras.find((aura) => aura.locked)
     const lockedAbility = searchInventory.abilityAuras.find((aura) => aura.locked)
-    const sorted = this.sortedResults()
+    const sorted = this.recommendedResults()
     return `
       <section class="page-head split">
         <div><span class="eyebrow">Battle simulator search</span><h2>Optimize</h2><p>All exact variants and quantities in Your Inventory are considered. Pool is only the catalog used to build your inventory.</p></div>
@@ -351,14 +349,10 @@ export class DeckHelperApp {
       </section>
       ${this.progress ? this.renderProgress(this.progress) : ''}
       ${this.results.length ? `
-        <section class="results-head"><h3>Top Teams</h3><div class="ranking-tabs">${this.rankingButton('average', 'Average')}${this.rankingButton('median', 'Median')}${this.rankingButton('minimum', 'Safest')}${this.rankingButton('maximum', 'Ceiling')}${this.rankingButton('consistency', 'Consistent')}</div></section>
+        <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>Ranked by expected Depths performance</span></section>
         <section class="result-list">${sorted.map((result, index) => this.renderResult(result, index + 1)).join('')}</section>
       ` : `<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Your Inventory needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Drag cards from Pool into Your Inventory on the right.' : 'Start the search when you are ready.'}</span></section>`}
     `
-  }
-
-  private rankingButton(value: Ranking, label: string) {
-    return `<button class="rank-tab ${this.ranking === value ? 'active' : ''}" data-action="ranking" data-ranking="${value}">${label}</button>`
   }
 
   private renderProgress(progress: OptimizerProgress) {
@@ -381,16 +375,16 @@ export class DeckHelperApp {
     `
   }
 
-  private sortedResults() {
-    const results = [...this.results]
-    const metric = (result: RankedTeam) => {
-      if (this.ranking === 'average') return result.metrics.averageDepth
-      if (this.ranking === 'median') return result.metrics.medianDepth
-      if (this.ranking === 'minimum') return result.metrics.minimumDepth
-      if (this.ranking === 'maximum') return result.metrics.maximumDepth
-      return result.metrics.consistency
-    }
-    return results.sort((a, b) => this.ranking === 'consistency' ? metric(a) - metric(b) : metric(b) - metric(a))
+  private recommendedResults() {
+    return [...this.results]
+      .sort((a, b) =>
+        b.metrics.averageDepth - a.metrics.averageDepth
+        || b.metrics.medianDepth - a.metrics.medianDepth
+        || b.metrics.minimumDepth - a.metrics.minimumDepth
+        || a.metrics.consistency - b.metrics.consistency
+        || a.id.localeCompare(b.id),
+      )
+      .slice(0, 10)
   }
 
   private renderResult(result: RankedTeam, rank: number) {
@@ -556,7 +550,6 @@ export class DeckHelperApp {
     else if (action === 'remove-aura') this.removeAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
     else if (action === 'start-search') this.startSearch()
     else if (action === 'cancel-search') this.cancelWorker()
-    else if (action === 'ranking') { this.ranking = target.dataset.ranking as Ranking; this.render() }
     else if (action === 'export-result') this.exportResult(target.dataset.result || '')
     else if (action === 'save-result') this.saveResult(target.dataset.result || '')
     else if (action === 'save-current') this.saveCurrent()
