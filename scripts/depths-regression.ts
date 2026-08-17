@@ -2,7 +2,7 @@ import cards from '../src/data/cards'
 import { cardAge } from '../src/data/ages'
 import { createBattleStateV2, simulateBattleV2 } from '../src/engine/battle-v2'
 import { DRAGON_CARDS } from '../src/engine/combat-data'
-import { generateDepthsTeam, isDepthsSourceEligible } from '../src/engine/depths'
+import { depthsMechanics, generateDepthsTeam, getDepthsPool, isDepthsSourceEligible, MAX_DEPTH_BANS } from '../src/engine/depths'
 import { simulateDepthsBatch, simulateDepthsRun } from '../src/engine/simulation'
 import { getAttack, getHealth, getPower } from '../src/engine/stats'
 import type { BattleResult, CardDefinition, CombatCard, DepthsEnemy, TeamLoadout } from '../src/types'
@@ -43,6 +43,29 @@ function cardByName(name: string) {
 
 function loadout(names: string[]): TeamLoadout {
   return { cards: names.map((cardName) => ({ cardName, borders: [] })) }
+}
+
+// Player-unlocked Depth bans remove only additional cards from the generated pool.
+// They are optional (0..10), while the game's built-in hard exclusions always stay excluded.
+{
+  const floor = 50_000
+  const eligibleNames = getDepthsPool(floor).map((entry) => entry.card.name)
+  assert(eligibleNames.length > 12, 'Expected enough Depth-eligible cards for ban regression')
+  const twoBans = eligibleNames.slice(0, 2)
+  const twoBanPool = getDepthsPool(floor, twoBans).map((entry) => entry.card.name)
+  for (const name of twoBans) assert(!twoBanPool.includes(name), `Player Depth ban did not remove ${name}`)
+  assert(twoBanPool.length < eligibleNames.length, 'Two optional Depth bans should shrink the pool')
+
+  const elevenBans = eligibleNames.slice(0, 11)
+  const cappedPool = getDepthsPool(floor, elevenBans).map((entry) => entry.card.name)
+  for (const name of elevenBans.slice(0, MAX_DEPTH_BANS)) {
+    assert(!cappedPool.includes(name), `Expected capped player ban to remove ${name}`)
+  }
+  assert(cappedPool.includes(elevenBans[MAX_DEPTH_BANS]), 'Player Depth bans must cap at 10')
+
+  for (const name of depthsMechanics.hardExclusions) {
+    assert(!getDepthsPool(floor, []).some((entry) => entry.card.name === name), `Default Depth ban ${name} must remain excluded`)
+  }
 }
 
 const dummyDefinition: CardDefinition = {

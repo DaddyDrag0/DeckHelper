@@ -86,6 +86,7 @@ interface ThresholdResult {
 
 interface SearchRuntime {
   simulations: number
+  bannedCardNames: string[]
   possibleCombinations: number
   quickTested: number
   remainingCandidates: number
@@ -263,7 +264,7 @@ function probeFloor(loadout: TeamLoadout, floor: number, seeds: number[], runtim
   const unsupported = new Set<string>()
   for (const seed of seeds) {
     const floorSeed = mixSeed(seed, floor)
-    const enemies = generateDepthsTeam(floor, floorSeed)
+    const enemies = generateDepthsTeam(floor, floorSeed, runtime.bannedCardNames)
     const battle = simulateBattleV2(loadout, enemies, floorSeed ^ 0x51ed270b, 2_000, true, false)
     runtime.simulations += 1
     if (battle.winner === 'Allies') wins += 1
@@ -563,6 +564,7 @@ async function finalMetrics(
     floorCap: maxFloor,
     seed: seeds[0] ?? 1,
     battleTurnCap: 10_000,
+    bannedCardNames: runtime.bannedCardNames,
   }
   const batch = exactBatchRunner
     ? await exactBatchRunner(loadout, options)
@@ -616,6 +618,7 @@ export async function searchBestTeams(
   settingsInput: Partial<SearchSettings> | undefined,
   onProgress: (progress: OptimizerProgress) => void,
   exactBatchRunner?: ExactDepthsBatchRunner,
+  bannedCardNames: string[] = [],
 ): Promise<RankedTeam[]> {
   const settings = settingsWithDefaults(settingsInput)
   const fastMode = settings.mode === 'fast'
@@ -629,6 +632,7 @@ export async function searchBestTeams(
   const generated = generateTeamNameSets(inventory, settings.candidateCap)
   const runtime: SearchRuntime = {
     simulations: 0,
+    bannedCardNames: bannedCardNames.slice(0, 10),
     possibleCombinations: generated.possible,
     quickTested: 0,
     remainingCandidates: generated.sets.length,
@@ -800,6 +804,7 @@ export async function searchReplacements(
   settingsInput: Partial<SearchSettings> | undefined,
   onProgress: (progress: OptimizerProgress) => void,
   exactBatchRunner?: ExactDepthsBatchRunner,
+  bannedCardNames: string[] = [],
 ): Promise<{ baseline: TeamMetrics; results: ReplacementResult[] }> {
   const settings = settingsWithDefaults(settingsInput)
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
@@ -819,6 +824,7 @@ export async function searchReplacements(
   })
   const runtime: SearchRuntime = {
     simulations: 0,
+    bannedCardNames: bannedCardNames.slice(0, 10),
     possibleCombinations: choices.length,
     quickTested: 0,
     remainingCandidates: choices.length,

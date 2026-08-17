@@ -13,6 +13,7 @@ interface BatchRequest {
   runs: number
   floorCap: number
   seed: number
+  bannedCardNames?: string[]
 }
 
 interface SingleRunRequest {
@@ -22,6 +23,7 @@ interface SingleRunRequest {
   floorCap: number
   batchSeed: number
   runIndex: number
+  bannedCardNames?: string[]
 }
 
 type SimulationRequest = BatchRequest | SingleRunRequest
@@ -81,6 +83,7 @@ function simulateOne(request: SingleRunRequest, onProgress?: (floor: number, bat
     seed: runSeed(request.batchSeed, request.runIndex),
     battleTurnCap: LIVE_BATTLE_TURN_CAP,
     throwOnBattleTurnCap: false,
+    bannedCardNames: request.bannedCardNames,
   }, onProgress)
 }
 
@@ -215,6 +218,7 @@ async function simulateParallel(request: BatchRequest): Promise<DepthsRunResult[
         floorCap: request.floorCap,
         batchSeed: request.seed,
         runIndex,
+        bannedCardNames: request.bannedCardNames,
       } satisfies SingleRunRequest)
     }
 

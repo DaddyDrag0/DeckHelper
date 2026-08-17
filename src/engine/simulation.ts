@@ -48,6 +48,8 @@ export interface DepthsSimulationOptions {
   seed?: number
   battleTurnCap?: number
   throwOnBattleTurnCap?: boolean
+  /** Optional player-unlocked Depth bans. Default game exclusions remain active separately. */
+  bannedCardNames?: string[]
 }
 
 export interface DepthsBatchOptions extends DepthsSimulationOptions {
@@ -80,7 +82,7 @@ export function simulateDepthsRun(
 
   for (let floor = startFloor; floor <= floorCap; floor++) {
     const floorSeed = mixSeed(runSeed, floor)
-    const enemies = generateDepthsTeam(floor, floorSeed)
+    const enemies = generateDepthsTeam(floor, floorSeed, options.bannedCardNames)
     const enemyNames = enemies.map((enemy) => enemy.card.name)
     onProgress?.(floor, undefined, enemyNames)
     const hasTurnCap = Number.isFinite(options.battleTurnCap)
@@ -158,6 +160,7 @@ export function simulateDepthsBatch(
       floorCap: options.floorCap,
       seed: runSeed,
       battleTurnCap: options.battleTurnCap,
+      bannedCardNames: options.bannedCardNames,
     })
     results.push(result)
     for (const ability of result.unsupportedAbilities) unsupported.add(ability)

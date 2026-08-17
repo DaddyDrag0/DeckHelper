@@ -33,6 +33,7 @@ export interface SavedDeck {
 
 export interface AppState {
   inventory: InventoryState
+  depthBans: string[]
   favorites: SavedDeck[]
   currentDeck: TeamLoadout
 }
@@ -89,12 +90,14 @@ export interface OptimizerProgress {
 export interface SearchRequest {
   kind: 'search'
   inventory: InventoryState
+  bannedCardNames?: string[]
   settings?: Partial<SearchSettings>
 }
 
 export interface ReplacementRequest {
   kind: 'replacement'
   inventory: InventoryState
+  bannedCardNames?: string[]
   currentLoadout: TeamLoadout
   slot: DeckSlot
   settings?: Partial<SearchSettings>

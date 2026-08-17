@@ -39,6 +39,7 @@ const runParallelDepthsBatch: ExactDepthsBatchRunner = (loadout, options) => new
     runs: Math.max(1, Math.floor(options.runs ?? 15)),
     floorCap: Math.max(1, Math.floor(options.floorCap ?? 50_000)),
     seed: options.seed ?? 1,
+    bannedCardNames: options.bannedCardNames,
   })
 })
 
@@ -49,7 +50,7 @@ worker.onmessage = async (event: MessageEvent<WorkerInbound>) => {
     if (request.kind === 'search') {
       const results = await searchBestTeams(request.inventory, request.settings, (progress) => {
         send({ type: 'progress', progress })
-      }, runParallelDepthsBatch)
+      }, runParallelDepthsBatch, request.bannedCardNames)
       send({ type: 'search-result', results })
       return
     }
@@ -61,6 +62,7 @@ worker.onmessage = async (event: MessageEvent<WorkerInbound>) => {
       request.settings,
       (progress) => send({ type: 'progress', progress }),
       runParallelDepthsBatch,
+      request.bannedCardNames,
     )
     send({ type: 'replacement-result', baseline: result.baseline, results: result.results })
   } catch (error) {

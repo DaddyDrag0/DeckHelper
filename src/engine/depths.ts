@@ -8,6 +8,22 @@ const HARD_EXCLUSIONS = new Set([
   'Nán Fāng Zhū Què', 'Brachiosaurus', 'Jersey Devil',
 ])
 
+export const MAX_DEPTH_BANS = 10
+
+function normalizeDepthBans(names: readonly string[] | undefined): string[] {
+  if (!names?.length) return []
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const rawName of names) {
+    const name = String(rawName || '').trim()
+    if (!name || seen.has(name)) continue
+    seen.add(name)
+    normalized.push(name)
+    if (normalized.length >= MAX_DEPTH_BANS) break
+  }
+  return normalized.sort((a, b) => a.localeCompare(b))
+}
+
 const WEATHER_WEIGHTS: Record<string, number> = {
   Storm: 0.5,
   Snow: 0.5,
@@ -73,6 +89,7 @@ const PREPARED = cards
 
 const UNLOCK_FLOORS = [...new Set(PREPARED.map((entry) => entry.unlockFloor))].sort((a, b) => a - b)
 const POOL_CACHE = new Map<number, PreparedPool>()
+const CUSTOM_BAN_POOL_CACHE = new Map<string, PreparedPool>()
 
 function unlockTier(floor: number): number {
   let low = 0
@@ -85,16 +102,19 @@ function unlockTier(floor: number): number {
   return low - 1
 }
 
-function preparedPool(floor: number): PreparedPool {
+function preparedPool(floor: number, bannedCardNames: readonly string[] = []): PreparedPool {
   const tier = unlockTier(floor)
   if (tier < 0) return { entries: [], cumulative: [], totalWeight: 0 }
 
-  const cached = POOL_CACHE.get(tier)
+  const bans = normalizeDepthBans(bannedCardNames)
+  const cacheKey = bans.length ? `${tier}|${bans.join('\u0000')}` : ''
+  const cached = bans.length ? CUSTOM_BAN_POOL_CACHE.get(cacheKey) : POOL_CACHE.get(tier)
   if (cached) return cached
 
   const maxUnlockFloor = UNLOCK_FLOORS[tier]
+  const banned = bans.length ? new Set(bans) : null
   const entries = PREPARED
-    .filter((entry) => entry.unlockFloor <= maxUnlockFloor)
+    .filter((entry) => entry.unlockFloor <= maxUnlockFloor && !banned?.has(entry.card.name))
     .sort((a, b) => a.originalIndex - b.originalIndex)
 
   const cumulative: number[] = []
@@ -105,7 +125,8 @@ function preparedPool(floor: number): PreparedPool {
   }
 
   const pool = { entries, cumulative, totalWeight }
-  POOL_CACHE.set(tier, pool)
+  if (bans.length) CUSTOM_BAN_POOL_CACHE.set(cacheKey, pool)
+  else POOL_CACHE.set(tier, pool)
   return pool
 }
 
@@ -114,8 +135,8 @@ export function isUnlockedAtFloor(card: CardDefinition, floor: number): boolean 
   return getAttack(card) * getHealth(card) < depthBudget(floor)
 }
 
-export function getDepthsPool(floor: number) {
-  const pool = preparedPool(floor)
+export function getDepthsPool(floor: number, bannedCardNames: readonly string[] = []) {
+  const pool = preparedPool(floor, bannedCardNames)
   return pool.entries.map(({ card, weight }) => ({ card, weight }))
 }
 
@@ -130,8 +151,8 @@ function pickWeighted(pool: PreparedPool, roll: number): CardDefinition {
   return pool.entries[low].card
 }
 
-export function generateDepthsTeam(floor: number, seed = floor): DepthsEnemy[] {
-  const pool = preparedPool(floor)
+export function generateDepthsTeam(floor: number, seed = floor, bannedCardNames: readonly string[] = []): DepthsEnemy[] {
+  const pool = preparedPool(floor, bannedCardNames)
   const rng = new SeededRng(seed)
   const power = depthsPower(floor)
   const result: DepthsEnemy[] = []
@@ -157,4 +178,5 @@ export const depthsMechanics = {
   duplicateEnemiesAllowed: true,
   weatherWeights: WEATHER_WEIGHTS,
   hardExclusions: [...HARD_EXCLUSIONS],
+  maxPlayerBans: MAX_DEPTH_BANS,
 }

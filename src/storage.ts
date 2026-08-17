@@ -1,4 +1,6 @@
 import type { AppState, AuraOwnedBorder, DeckSlot, InventoryState, OwnedAura, OwnedCard, SavedDeck } from './app-types'
+import cards from './data/cards'
+import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 import type { AuraBorderName, BorderName, TeamLoadout } from './types'
 import { cardVariantKey, canonicalBorders } from './card-variants'
 import { depthSelectableAbilityAuraNames, depthSelectableCardNames, depthSelectableStatAuraNames } from './selectable'
@@ -7,15 +9,33 @@ const STORAGE_KEY = 'deckhelper.state.v1'
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
 const INVENTORY_CODE_PREFIX = 'DHINV1:'
+const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
 
 const EMPTY_LOADOUT: TeamLoadout = { cards: [], statAura: null, abilityAura: null }
 
 export function defaultState(): AppState {
   return {
     inventory: { cards: [], statAuras: [], abilityAuras: [] },
+    depthBans: [],
     favorites: [],
     currentDeck: { ...EMPTY_LOADOUT, cards: [] },
   }
+}
+
+function cleanDepthBans(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue
+    const name = raw.trim()
+    const card = CARD_BY_NAME.get(name)
+    if (!name || seen.has(name) || !card || !isDepthsSourceEligible(card)) continue
+    seen.add(name)
+    result.push(name)
+    if (result.length >= MAX_DEPTH_BANS) break
+  }
+  return result
 }
 
 function cleanCard(value: unknown): OwnedCard | null {
@@ -183,6 +203,7 @@ export function loadState(): AppState {
       : []
     return {
       inventory: sanitizeInventory(raw.inventory),
+      depthBans: cleanDepthBans(raw.depthBans),
       favorites,
       currentDeck: cleanLoadout(raw.currentDeck),
     }

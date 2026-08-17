@@ -18,6 +18,7 @@ import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNum
 import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
 import { encodeDepthsTeam } from './depths-export'
 import { depthSelectableAuras, depthSelectableCards } from './selectable'
+import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
@@ -32,6 +33,7 @@ export class DeckHelperApp {
   private poolBorders = new Map<string, BorderName[]>()
   private auraBorderDraft = new Map<string, AuraOwnedBorder>()
   private auraSearch = ''
+  private depthBanQuery = ''
   private inventoryCodeText = ''
   private inventoryCodeStatus = ''
   private worker: Worker | null = null
@@ -333,6 +335,13 @@ export class DeckHelperApp {
     const lockedCards = searchInventory.cards.filter((card) => card.locked || card.lockedPosition !== null)
     const lockedStat = searchInventory.statAuras.find((aura) => aura.locked)
     const lockedAbility = searchInventory.abilityAuras.find((aura) => aura.locked)
+    const banQuery = this.depthBanQuery.trim().toLowerCase()
+    const banCandidates = cards
+      .filter(isDepthsSourceEligible)
+      .filter((card) => !this.state.depthBans.includes(card.name))
+      .filter((card) => banQuery && (card.name.toLowerCase().includes(banQuery) || (card.ability || '').toLowerCase().includes(banQuery)))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(0, 8)
     const sorted = this.recommendedResults()
     return `
       <section class="page-head split">
@@ -347,6 +356,17 @@ export class DeckHelperApp {
         <div><span>Locked cards</span><strong>${lockedCards.length ? lockedCards.map((card) => `${escapeHtml(card.cardName)} · ${escapeHtml(borderLabel(card.borders))}${card.lockedPosition !== null ? ` (#${card.lockedPosition + 1})` : ''}`).join(', ') : 'None'}</strong></div>
         <div><span>Stat Aura</span><strong>${lockedStat ? escapeHtml(lockedStat.auraName) : 'Auto'}</strong></div>
         <div><span>Ability Aura</span><strong>${lockedAbility ? escapeHtml(lockedAbility.auraName) : 'Auto'}</strong></div>
+      </section>
+      <section class="depth-ban-panel panel">
+        <div class="depth-ban-head">
+          <div><strong>Depth Bans</strong><span>Optional · default game bans stay active separately</span></div>
+          <div>${this.state.depthBans.length ? `<button class="subtle" data-action="depth-ban-clear" ${this.worker ? 'disabled' : ''}>Clear</button>` : ''}<b>${this.state.depthBans.length}/${MAX_DEPTH_BANS}</b></div>
+        </div>
+        ${this.state.depthBans.length ? `<div class="depth-ban-chips">${this.state.depthBans.map((name) => `<button data-action="depth-ban-remove" data-name="${escapeHtml(name)}" ${this.worker ? 'disabled' : ''}>${escapeHtml(name)} ×</button>`).join('')}</div>` : ''}
+        <div class="depth-ban-search">
+          <input id="depth-ban-search" value="${escapeHtml(this.depthBanQuery)}" placeholder="${this.state.depthBans.length >= MAX_DEPTH_BANS ? '10/10 bans selected' : 'Search an enemy card to ban'}" autocomplete="off" ${this.worker || this.state.depthBans.length >= MAX_DEPTH_BANS ? 'disabled' : ''}>
+          ${banQuery && !this.worker && this.state.depthBans.length < MAX_DEPTH_BANS ? `<div class="depth-ban-suggestions">${banCandidates.length ? banCandidates.map((card) => `<button data-action="depth-ban-add" data-name="${escapeHtml(card.name)}"><strong>${escapeHtml(card.name)}</strong><span>${escapeHtml(card.ability || 'No ability')}</span></button>`).join('') : '<small>No eligible Depth enemies found.</small>'}</div>` : ''}
+        </div>
       </section>
       ${this.progress ? this.renderProgress(this.progress) : ''}
       ${this.results.length ? `
@@ -500,6 +520,9 @@ export class DeckHelperApp {
     } else if (target.id === 'aura-search') {
       this.auraSearch = target.value
       this.renderAndRefocus('aura-search')
+    } else if (target.id === 'depth-ban-search') {
+      this.depthBanQuery = target.value
+      this.renderAndRefocus('depth-ban-search')
     } else if (target.id === 'inventory-code-input') {
       this.inventoryCodeText = target.value
       this.inventoryCodeStatus = ''
@@ -544,6 +567,9 @@ export class DeckHelperApp {
     else if (action === 'aura-border-choice') this.chooseAuraBorder(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder)
     else if (action === 'add-aura') this.addAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '', target.dataset.border as AuraOwnedBorder)
     else if (action === 'remove-aura') this.removeAura(target.dataset.kind as 'stat' | 'ability', target.dataset.name || '')
+    else if (action === 'depth-ban-add') this.addDepthBan(target.dataset.name || '')
+    else if (action === 'depth-ban-remove') this.removeDepthBan(target.dataset.name || '')
+    else if (action === 'depth-ban-clear') this.clearDepthBans()
     else if (action === 'start-search-fast') this.startSearch('fast')
     else if (action === 'start-search-full') this.startSearch('full')
     else if (action === 'cancel-search') this.cancelWorker()
@@ -810,6 +836,38 @@ export class DeckHelperApp {
     this.persist(); this.render()
   }
 
+  private clearBanSensitiveResults() {
+    this.results = []
+    this.replacementResults = []
+    this.replacementBaseline = null
+    this.replacementSlot = null
+  }
+
+  private addDepthBan(name: string) {
+    if (this.worker || this.state.depthBans.length >= MAX_DEPTH_BANS || this.state.depthBans.includes(name)) return
+    const card = cards.find((candidate) => candidate.name === name)
+    if (!card || !isDepthsSourceEligible(card)) return
+    this.state.depthBans.push(name)
+    this.depthBanQuery = ''
+    this.clearBanSensitiveResults()
+    this.persist(); this.render()
+  }
+
+  private removeDepthBan(name: string) {
+    if (this.worker) return
+    this.state.depthBans = this.state.depthBans.filter((entry) => entry !== name)
+    this.clearBanSensitiveResults()
+    this.persist(); this.render()
+  }
+
+  private clearDepthBans() {
+    if (this.worker || !this.state.depthBans.length) return
+    this.state.depthBans = []
+    this.depthBanQuery = ''
+    this.clearBanSensitiveResults()
+    this.persist(); this.render()
+  }
+
   private startSearch(mode: 'fast' | 'full') {
     this.error = ''
     this.results = []
@@ -821,7 +879,7 @@ export class DeckHelperApp {
       this.render()
       return
     }
-    this.runWorker({ kind: 'search', inventory: structuredClone(this.state.inventory), settings: { mode } })
+    this.runWorker({ kind: 'search', inventory: structuredClone(this.state.inventory), bannedCardNames: [...this.state.depthBans], settings: { mode } })
   }
 
   private startReplacement(slot: DeckSlot) {
@@ -830,7 +888,7 @@ export class DeckHelperApp {
     this.replacementSlot = slot
     this.replacementResults = []
     this.replacementBaseline = null
-    this.runWorker({ kind: 'replacement', inventory: structuredClone(this.state.inventory), currentLoadout: structuredClone(this.state.currentDeck), slot })
+    this.runWorker({ kind: 'replacement', inventory: structuredClone(this.state.inventory), bannedCardNames: [...this.state.depthBans], currentLoadout: structuredClone(this.state.currentDeck), slot })
   }
 
   private runWorker(request: import('./app-types').OptimizerRequest) {
