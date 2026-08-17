@@ -16,6 +16,7 @@ import type { AuraBorderName, AuraSelection, BorderName, TeamCard, TeamLoadout }
 import { exportInventoryCode, importInventoryCode, loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
 import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
+import { depthSelectableAuras, depthSelectableCards } from './selectable'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
@@ -213,7 +214,7 @@ export class DeckHelperApp {
   }
 
   private poolCatalogCards() {
-    return cards.filter((card) => !card.unobtainable || card.name.toLowerCase().includes('conqueror'))
+    return depthSelectableCards
   }
 
   private filteredPoolCards() {
@@ -279,7 +280,7 @@ export class DeckHelperApp {
 
   private renderAuras() {
     const query = this.auraSearch.trim().toLowerCase()
-    const visible = auras.filter((aura) => !query || aura.name.toLowerCase().includes(query) || (aura.skillName || '').toLowerCase().includes(query))
+    const visible = depthSelectableAuras.filter((aura) => !query || aura.name.toLowerCase().includes(query) || (aura.skillName || '').toLowerCase().includes(query))
     const ownedCount = this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length
     return `
       <section class="page-head split">
@@ -287,7 +288,7 @@ export class DeckHelperApp {
       </section>
       <section class="panel aura-workspace">
         <label class="inventory-search aura-workspace-search"><span>Search Auras</span><input id="aura-search" value="${escapeHtml(this.auraSearch)}" placeholder="Aura name or skill"></label>
-        <div class="aura-workspace-summary"><strong>${visible.length}</strong><span>of ${auras.length} auras shown</span><em>${ownedCount} owned</em></div>
+        <div class="aura-workspace-summary"><strong>${visible.length}</strong><span>of ${depthSelectableAuras.length} auras shown</span><em>${ownedCount} owned</em></div>
         <div class="aura-columns">
           <div class="aura-column">
             <div class="aura-column-head"><strong>Stat Auras</strong><span>${this.state.inventory.statAuras.length} owned</span></div>

@@ -7,7 +7,8 @@ assert.ok(!('pool' in state), 'Pool should be generated from the card catalog, n
 
 const app = readFileSync('src/app.ts', 'utf8')
 const styles = readFileSync('src/styles.css', 'utf8')
-assert.ok(app.includes("!card.unobtainable || card.name.toLowerCase().includes('conqueror')"), 'Pool must exclude unobtainable cards except Conqueror')
+assert.ok(app.includes('return depthSelectableCards'), 'Pool must use the shared Depths-selectable card catalog')
+assert.ok(app.includes('const visible = depthSelectableAuras.filter'), 'Aura page must use the shared Depths-selectable aura catalog')
 assert.ok(app.includes('data-drop-zone=\"inventory\"'), 'Inventory drop destination is missing')
 assert.ok(app.includes("data-action=\"pool-border\""), 'Pool PCRG selection is missing')
 assert.ok(app.includes('addOwnedVariant'), 'Pool-to-inventory variant add/quantity merge is missing')

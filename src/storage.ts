@@ -1,6 +1,7 @@
 import type { AppState, AuraOwnedBorder, DeckSlot, InventoryState, OwnedAura, OwnedCard, SavedDeck } from './app-types'
 import type { AuraBorderName, BorderName, TeamLoadout } from './types'
 import { cardVariantKey, canonicalBorders } from './card-variants'
+import { depthSelectableAbilityAuraNames, depthSelectableCardNames, depthSelectableStatAuraNames } from './selectable'
 
 const STORAGE_KEY = 'deckhelper.state.v1'
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
@@ -20,7 +21,7 @@ export function defaultState(): AppState {
 function cleanCard(value: unknown): OwnedCard | null {
   if (!value || typeof value !== 'object') return null
   const raw = value as Partial<OwnedCard>
-  if (!raw.cardName || typeof raw.cardName !== 'string') return null
+  if (!raw.cardName || typeof raw.cardName !== 'string' || !depthSelectableCardNames.has(raw.cardName)) return null
   const quantity = Number.isFinite(Number(raw.quantity))
     ? Math.max(1, Math.min(999, Math.floor(Number(raw.quantity))))
     : 1
@@ -54,7 +55,7 @@ function cleanAura(value: unknown): OwnedAura | null {
   }
 }
 
-function cleanInventory(value: unknown): InventoryState {
+export function sanitizeInventory(value: unknown): InventoryState {
   if (!value || typeof value !== 'object') return { cards: [], statAuras: [], abilityAuras: [] }
   const raw = value as Partial<InventoryState>
   const cleanedCards = Array.isArray(raw.cards) ? raw.cards.map(cleanCard).filter((card): card is OwnedCard => Boolean(card)) : []
@@ -71,8 +72,8 @@ function cleanInventory(value: unknown): InventoryState {
     if (existing.lockedPosition === null) existing.lockedPosition = card.lockedPosition
     else if (card.lockedPosition !== null && existing.lockedPosition !== card.lockedPosition) existing.lockedPosition = null
   }
-  const statAuras = Array.isArray(raw.statAuras) ? raw.statAuras.map(cleanAura).filter((aura): aura is OwnedAura => Boolean(aura)) : []
-  const abilityAuras = Array.isArray(raw.abilityAuras) ? raw.abilityAuras.map(cleanAura).filter((aura): aura is OwnedAura => Boolean(aura)) : []
+  const statAuras = Array.isArray(raw.statAuras) ? raw.statAuras.map(cleanAura).filter((aura): aura is OwnedAura => Boolean(aura)).filter((aura) => depthSelectableStatAuraNames.has(aura.auraName)) : []
+  const abilityAuras = Array.isArray(raw.abilityAuras) ? raw.abilityAuras.map(cleanAura).filter((aura): aura is OwnedAura => Boolean(aura)).filter((aura) => depthSelectableAbilityAuraNames.has(aura.auraName)) : []
   return {
     cards: [...variants.values()],
     statAuras: dedupeBy(statAuras, (aura) => aura.auraName),
@@ -98,7 +99,7 @@ function decodeBase64Url(value: string): string {
 }
 
 export function exportInventoryCode(inventory: InventoryState): string {
-  const payload = { version: 1, inventory: cleanInventory(inventory) }
+  const payload = { version: 1, inventory: sanitizeInventory(inventory) }
   return INVENTORY_CODE_PREFIX + encodeBase64Url(JSON.stringify(payload))
 }
 
@@ -110,17 +111,19 @@ export function importInventoryCode(code: string): InventoryState {
     const payload = JSON.parse(decoded) as { version?: unknown; inventory?: unknown }
     if (payload.version !== 1) throw new Error('Unsupported inventory code version.')
     if (!payload.inventory || typeof payload.inventory !== 'object') throw new Error('Inventory data is missing.')
-    return cleanInventory(payload.inventory)
+    return sanitizeInventory(payload.inventory)
   } catch (error) {
     if (error instanceof Error && (error.message === 'Unsupported inventory code version.' || error.message === 'Inventory data is missing.')) throw error
     throw new Error('That inventory code is damaged or incomplete.')
   }
 }
 
-function cleanAuraSelection(value: unknown) {
+function cleanAuraSelection(value: unknown, kind: 'stat' | 'ability') {
   if (!value || typeof value !== 'object') return null
   const raw = value as { auraName?: unknown; border?: unknown }
   if (typeof raw.auraName !== 'string' || !raw.auraName) return null
+  const allowedNames = kind === 'stat' ? depthSelectableStatAuraNames : depthSelectableAbilityAuraNames
+  if (!allowedNames.has(raw.auraName)) return null
   const border = raw.border == null || ['Platinum', 'Crystal', 'Galaxy'].includes(String(raw.border))
     ? raw.border as AuraBorderName | null | undefined
     : null
@@ -134,7 +137,7 @@ function cleanLoadout(value: unknown): TeamLoadout {
     ? raw.cards.slice(0, 4).flatMap((slot) => {
         if (!slot || typeof slot !== 'object') return []
         const candidate = slot as { cardName?: unknown; borders?: unknown }
-        if (typeof candidate.cardName !== 'string' || !candidate.cardName) return []
+        if (typeof candidate.cardName !== 'string' || !candidate.cardName || !depthSelectableCardNames.has(candidate.cardName)) return []
         const borders = Array.isArray(candidate.borders)
           ? candidate.borders.filter((border): border is BorderName => CARD_BORDERS.includes(border as BorderName))
           : []
@@ -143,8 +146,8 @@ function cleanLoadout(value: unknown): TeamLoadout {
     : []
   return {
     cards,
-    statAura: cleanAuraSelection(raw.statAura),
-    abilityAura: cleanAuraSelection(raw.abilityAura),
+    statAura: cleanAuraSelection(raw.statAura, 'stat'),
+    abilityAura: cleanAuraSelection(raw.abilityAura, 'ability'),
   }
 }
 
@@ -179,7 +182,7 @@ export function loadState(): AppState {
       ? raw.favorites.map(cleanFavorite).filter((favorite): favorite is SavedDeck => Boolean(favorite))
       : []
     return {
-      inventory: cleanInventory(raw.inventory),
+      inventory: sanitizeInventory(raw.inventory),
       favorites,
       currentDeck: cleanLoadout(raw.currentDeck),
     }
