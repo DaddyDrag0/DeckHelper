@@ -8,4 +8,5 @@
 .aura-workspace .aura-column{min-width:0}
 .aura-workspace .aura-card-grid{min-width:0}
 .aura-workspace .aura-catalog-row{margin-bottom:8px}
+.card-art-frame:not(.compact) .card-art-inner img{object-fit:contain;object-position:center}
 @media(max-width:680px){.workspace-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
