@@ -101,3 +101,12 @@
 /* Optimizer result support/ability details. */
 .team-slot .team-slot-support{color:#92a0b1;font-size:7px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .result-actions .primary{white-space:nowrap}
+
+
+/* Unranked optimizer result layout */
+.result-card{grid-template-columns:minmax(0,1fr) auto;align-items:start}
+.result-content{min-width:0}
+.result-actions{grid-column:auto;display:flex;flex-direction:column;justify-content:flex-start;gap:5px;width:auto}
+.result-actions button{width:auto;min-width:104px}
+@media(max-width:1200px){.result-card{grid-template-columns:minmax(0,1fr) auto}.result-actions{grid-column:auto;flex-direction:column}}
+@media(max-width:650px){.result-card{grid-template-columns:1fr}.result-actions{grid-column:1;flex-direction:row}.result-actions button{flex:1;min-width:0}}
