@@ -16,6 +16,7 @@ import type { AuraBorderName, AuraSelection, BorderName, TeamCard, TeamLoadout }
 import { exportInventoryCode, importInventoryCode, loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
 import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
+import { depthsExportUrl } from './depths-export'
 import { depthSelectableAuras, depthSelectableCards } from './selectable'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
@@ -397,7 +398,10 @@ export class DeckHelperApp {
       <article class="result-card">
         <div class="result-rank">#${rank}</div>
         <div class="result-content">
-          <div class="team-slots">${result.loadout.cards.map((card, index) => `<div class="team-slot">${this.renderCardVisual(card.cardName, card.borders, true)}<div><span>Slot ${index + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small></div></div>`).join('')}</div>
+          <div class="team-slots">${result.loadout.cards.map((card, index) => {
+            const definition = cards.find((entry) => entry.name === card.cardName)
+            return `<div class="team-slot">${this.renderCardVisual(card.cardName, card.borders, true)}<div><span>Slot ${index + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small><small class="team-slot-support">Support / ability: ${escapeHtml(definition?.ability || 'None')}</small></div></div>`
+          }).join('')}</div>
           <div class="aura-line"><span>Stat: <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability: <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span></div>
           <div class="metrics">
             <div><span>Average</span><b>${formatNumber(result.metrics.averageDepth)}</b></div>
@@ -408,7 +412,7 @@ export class DeckHelperApp {
           </div>
           ${result.metrics.trusted ? '' : `<div class="warning">Unverified mechanics: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
         </div>
-        <div class="result-actions"><button data-action="use-result" data-result="${escapeHtml(result.id)}">Use Deck</button><button data-action="save-result" data-result="${escapeHtml(result.id)}">Save</button></div>
+        <div class="result-actions"><button class="primary" data-action="export-result" data-result="${escapeHtml(result.id)}">Export to Depths</button><button data-action="save-result" data-result="${escapeHtml(result.id)}">Save</button></div>
       </article>
     `
   }
@@ -553,7 +557,7 @@ export class DeckHelperApp {
     else if (action === 'start-search') this.startSearch()
     else if (action === 'cancel-search') this.cancelWorker()
     else if (action === 'ranking') { this.ranking = target.dataset.ranking as Ranking; this.render() }
-    else if (action === 'use-result') this.useResult(target.dataset.result || '')
+    else if (action === 'export-result') this.exportResult(target.dataset.result || '')
     else if (action === 'save-result') this.saveResult(target.dataset.result || '')
     else if (action === 'save-current') this.saveCurrent()
     else if (action === 'load-favorite') this.loadFavorite(target.dataset.id || '')
@@ -890,11 +894,18 @@ export class DeckHelperApp {
     return this.results.find((result) => result.id === id)
   }
 
-  private useResult(id: string) {
+  private exportResult(id: string) {
     const result = this.resultById(id)
     if (!result) return
-    this.state.currentDeck = structuredClone(result.loadout)
-    this.persist(); this.tab = 'pool'; this.render()
+    try {
+      const url = depthsExportUrl(result.loadout)
+      const opened = window.open(url, '_blank')
+      if (opened) opened.opener = null
+      else window.location.href = url
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : 'Could not export this team to Depths.'
+      this.render()
+    }
   }
 
   private saveResult(id: string) {

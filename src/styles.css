@@ -97,3 +97,7 @@
 @media (width<=420px){
   .aura-workspace .aura-card-grid{grid-template-columns:1fr}
 }
+
+/* Optimizer result support/ability details. */
+.team-slot .team-slot-support{color:#92a0b1;font-size:7px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.result-actions .primary{white-space:nowrap}

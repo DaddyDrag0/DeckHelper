@@ -24,3 +24,7 @@ assert.ok(styles.includes('compact-card-layout'), 'Compact inventory/aura card l
 assert.ok(styles.includes('.inventory-variant-list{grid-template-columns:repeat(2,minmax(0,1fr))'), 'Owned inventory should render side-by-side cards')
 assert.ok(styles.includes('.aura-workspace .aura-card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr))'), 'Aura catalog should render normal card-sized tiles in a packed card grid')
 console.log('workspace regression passed')
+
+assert.ok(app.includes('data-action=\"export-result\"'), 'Optimizer result must export to Depths')
+assert.ok(!app.includes('data-action=\"use-result\"'), 'Legacy Use Deck result action must be removed')
+assert.ok(app.includes('Support / ability:'), 'Optimizer result should show card support/ability text')
