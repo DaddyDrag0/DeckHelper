@@ -399,7 +399,7 @@ export class DeckHelperApp {
             const definition = cards.find((entry) => entry.name === card.cardName)
             return `<div class="team-slot">${this.renderCardVisual(card.cardName, card.borders, true)}<div><span>Slot ${index + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small><small class="team-slot-support">Support / ability: ${escapeHtml(definition?.ability || 'None')}</small></div></div>`
           }).join('')}</div>
-          <div class="aura-line"><span>Stat: <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability: <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span></div>
+          <div class="aura-line"><span>Stat: <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability: <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span>${this.searchMode === 'full' ? `<span>Median Depth: <b>${formatNumber(result.metrics.medianDepth)}</b></span>` : ''}</div>
           ${result.metrics.trusted ? '' : `<div class="warning">Unverified mechanics: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
         </div>
         <div class="result-actions"><button class="primary" data-action="export-result" data-result="${escapeHtml(result.id)}">Copy Export Code</button><button data-action="save-result" data-result="${escapeHtml(result.id)}">Save</button></div>
