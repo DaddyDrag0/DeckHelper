@@ -1,7 +1,5 @@
 import type { TeamLoadout } from './types'
 
-export const DEPTHS_CALCULATOR_URL = 'https://daddydrag0.github.io/CardRngExpansionDepths/'
-
 function toBase64Url(text: string): string {
   const bytes = new TextEncoder().encode(text)
   let binary = ''
@@ -18,10 +16,4 @@ export function encodeDepthsTeam(loadout: TeamLoadout): string {
     a: [loadout.abilityAura?.auraName || '', loadout.abilityAura?.border || ''],
   }
   return `CRE1-${toBase64Url(JSON.stringify(payload))}`
-}
-
-export function depthsExportUrl(loadout: TeamLoadout): string {
-  const url = new URL(DEPTHS_CALCULATOR_URL)
-  url.searchParams.set('team', encodeDepthsTeam(loadout))
-  return url.toString()
 }

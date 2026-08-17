@@ -16,7 +16,7 @@ import type { AuraBorderName, AuraSelection, BorderName, TeamCard, TeamLoadout }
 import { exportInventoryCode, importInventoryCode, loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
 import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, teamCardVariantKey } from './card-variants'
-import { depthsExportUrl } from './depths-export'
+import { encodeDepthsTeam } from './depths-export'
 import { depthSelectableAuras, depthSelectableCards } from './selectable'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
@@ -412,7 +412,7 @@ export class DeckHelperApp {
           </div>
           ${result.metrics.trusted ? '' : `<div class="warning">Unverified mechanics: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
         </div>
-        <div class="result-actions"><button class="primary" data-action="export-result" data-result="${escapeHtml(result.id)}">Export to Depths</button><button data-action="save-result" data-result="${escapeHtml(result.id)}">Save</button></div>
+        <div class="result-actions"><button class="primary" data-action="export-result" data-result="${escapeHtml(result.id)}">Copy Export Code</button><button data-action="save-result" data-result="${escapeHtml(result.id)}">Save</button></div>
       </article>
     `
   }
@@ -894,16 +894,40 @@ export class DeckHelperApp {
     return this.results.find((result) => result.id === id)
   }
 
-  private exportResult(id: string) {
+  private async exportResult(id: string) {
     const result = this.resultById(id)
     if (!result) return
     try {
-      const url = depthsExportUrl(result.loadout)
-      const opened = window.open(url, '_blank')
-      if (opened) opened.opener = null
-      else window.location.href = url
+      const code = encodeDepthsTeam(result.loadout)
+      let copied = false
+      try {
+        await navigator.clipboard.writeText(code)
+        copied = true
+      } catch {
+        const textarea = document.createElement('textarea')
+        textarea.value = code
+        textarea.setAttribute('readonly', '')
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        copied = document.execCommand('copy')
+        textarea.remove()
+      }
+      if (!copied) {
+        window.prompt('Copy this Depths export code:', code)
+        return
+      }
+      const button = this.root.querySelector<HTMLElement>(`[data-action="export-result"][data-result="${CSS.escape(id)}"]`)
+      if (button) {
+        const original = button.textContent || 'Copy Export Code'
+        button.textContent = 'Copied!'
+        window.setTimeout(() => {
+          if (button.isConnected) button.textContent = original
+        }, 1600)
+      }
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'Could not export this team to Depths.'
+      this.error = error instanceof Error ? error.message : 'Could not create this Depths export code.'
       this.render()
     }
   }

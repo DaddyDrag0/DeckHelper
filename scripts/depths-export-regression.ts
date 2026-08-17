@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { depthsExportUrl, encodeDepthsTeam } from '../src/depths-export'
+import { encodeDepthsTeam } from '../src/depths-export'
 import type { TeamLoadout } from '../src/types'
 
 const loadout: TeamLoadout = {
@@ -22,7 +22,4 @@ assert.equal(payload.v, 1)
 assert.deepEqual(payload.c, loadout.cards.map((card) => [card.cardName, card.borders]))
 assert.deepEqual(payload.s, ['Elohim', 'Crystal'])
 assert.deepEqual(payload.a, ['Berserker', 'Galaxy'])
-const url = new URL(depthsExportUrl(loadout))
-assert.equal(url.origin + url.pathname, 'https://daddydrag0.github.io/CardRngExpansionDepths/')
-assert.equal(url.searchParams.get('team'), code)
 console.log('Depths export CRE1 regression passed')

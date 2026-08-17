@@ -28,3 +28,11 @@ console.log('workspace regression passed')
 assert.ok(app.includes('data-action=\"export-result\"'), 'Optimizer result must export to Depths')
 assert.ok(!app.includes('data-action=\"use-result\"'), 'Legacy Use Deck result action must be removed')
 assert.ok(app.includes('Support / ability:'), 'Optimizer result should show card support/ability text')
+
+// Depths export must remain a copy/paste CRE1 code, not a URL handoff.
+const exportSource = readFileSync('src/depths-export.ts', 'utf8')
+const appSourceForExport = readFileSync('src/app.ts', 'utf8')
+if (!exportSource.includes('CRE1-')) throw new Error('Depths export no longer produces CRE1 codes')
+if (!appSourceForExport.includes('navigator.clipboard.writeText(code)')) throw new Error('Depths export no longer copies the code')
+if (!appSourceForExport.includes('Copy Export Code')) throw new Error('Optimizer result should label the copyable export clearly')
+if (appSourceForExport.includes('window.open(url')) throw new Error('Depths export should not auto-open the calculator')
