@@ -23,9 +23,9 @@ const AURA_BY_NAME = new Map(auras.map((aura) => [aura.name, aura] as const))
 const SEARCH_SEED_POOL_SIZE = 32
 const QUICK_TRIALS = 5
 const MAX_EXHAUSTIVE_COMBINATIONS = 100_000
-const SMALL_SEARCH_MIDDLE_CAP = 300
-const SMALL_SEARCH_ORDER_CAP = 48
-const SMALL_SEARCH_FINALIST_CAP = 20
+const SMALL_SEARCH_MIDDLE_CAP = 600
+const SMALL_SEARCH_ORDER_CAP = 96
+const SMALL_SEARCH_FINALIST_CAP = 30
 
 function makeSearchSeeds(count = SEARCH_SEED_POOL_SIZE): number[] {
   const size = Math.max(1, Math.floor(count))
@@ -44,7 +44,7 @@ export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
   quickCandidateCap: 1_000,
   middleCandidateCap: 120,
   finalistCap: 10,
-  finalSeedCount: 11,
+  finalSeedCount: 15,
   maxFloor: 100_000,
 }
 
@@ -53,6 +53,8 @@ interface Candidate {
   loadout: TeamLoadout
   heuristic: number
   quickEstimate: number
+  quickAverage: number
+  quickBest: number
   middleEstimate: number
   trusted: boolean
   unsupported: Set<string>
@@ -551,6 +553,14 @@ function finalMetrics(
   return metricStats(values, trusted, unsupported)
 }
 
+function compareRankedTeams(a: RankedTeam, b: RankedTeam): number {
+  return b.metrics.medianDepth - a.metrics.medianDepth
+    || b.metrics.averageDepth - a.metrics.averageDepth
+    || b.metrics.minimumDepth - a.metrics.minimumDepth
+    || a.metrics.consistency - b.metrics.consistency
+    || b.metrics.maximumDepth - a.metrics.maximumDepth
+}
+
 function rankedId(loadout: TeamLoadout): string {
   const cardsKey = loadout.cards.map((card) => `${card.cardName}:${card.borders.join('+')}`).join('|')
   const stat = loadout.statAura ? `${loadout.statAura.auraName}:${loadout.statAura.border || 'Base'}` : '-'
@@ -591,6 +601,8 @@ export function searchBestTeams(
       loadout,
       heuristic: rawLoadoutScore(ordered, statAura),
       quickEstimate: 1,
+      quickAverage: 1,
+      quickBest: 1,
       middleEstimate: 1,
       trusted: true,
       unsupported: new Set<string>(),
@@ -610,7 +622,7 @@ export function searchBestTeams(
 
   for (let index = 0; index < candidates.length; index++) {
     const candidate = candidates[index]
-    let bestQuickEstimate = 1
+    const quickValues: number[] = []
     for (let trial = 0; trial < QUICK_TRIALS; trial++) {
       const threshold = estimateThreshold(
         candidate.loadout,
@@ -620,14 +632,22 @@ export function searchBestTeams(
         undefined,
         3,
       )
-      bestQuickEstimate = Math.max(bestQuickEstimate, threshold.estimate)
+      quickValues.push(threshold.estimate)
       candidate.trusted = candidate.trusted && threshold.trusted
       for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
     }
-    candidate.quickEstimate = bestQuickEstimate
+    const sortedQuick = [...quickValues].sort((a, b) => a - b)
+    candidate.quickAverage = sortedQuick.reduce((sum, value) => sum + value, 0) / Math.max(1, sortedQuick.length)
+    candidate.quickEstimate = sortedQuick[Math.floor(sortedQuick.length / 2)] ?? 1
+    candidate.quickBest = sortedQuick[sortedQuick.length - 1] ?? 1
     runtime.quickTested = index + 1
     if (index % 12 === 0 || index + 1 === candidates.length) {
-      const best = [...candidates.slice(0, index + 1)].sort((a, b) => b.quickEstimate - a.quickEstimate)[0]
+      const best = [...candidates.slice(0, index + 1)].sort((a, b) =>
+        b.quickEstimate - a.quickEstimate
+        || b.quickAverage - a.quickAverage
+        || b.quickBest - a.quickBest
+        || b.heuristic - a.heuristic
+      )[0]
       const currentBest = best ? {
         id: rankedId(best.loadout),
         loadout: best.loadout,
@@ -638,7 +658,12 @@ export function searchBestTeams(
     }
   }
 
-  candidates.sort((a, b) => b.quickEstimate - a.quickEstimate || b.heuristic - a.heuristic)
+  candidates.sort((a, b) =>
+    b.quickEstimate - a.quickEstimate
+    || b.quickAverage - a.quickAverage
+    || b.quickBest - a.quickBest
+    || b.heuristic - a.heuristic
+  )
   const middleCandidateCap = exhaustiveQuick
     ? Math.max(settings.middleCandidateCap, SMALL_SEARCH_MIDDLE_CAP)
     : settings.middleCandidateCap
@@ -694,11 +719,11 @@ export function searchBestTeams(
     const metrics = finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, searchSeeds, runtime, settings.maxFloor)
     results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.quickEstimate })
     runtime.fullySimulated = index + 1
-    const best = [...results].sort((a, b) => b.metrics.medianDepth - a.metrics.medianDepth)[0]
+    const best = [...results].sort(compareRankedTeams)[0]
     emitProgress(runtime, 'final', onProgress, best)
   }
 
-  return results.sort((a, b) => b.metrics.averageDepth - a.metrics.averageDepth)
+  return results.sort(compareRankedTeams)
 }
 
 function bestOrderForReplacement(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number, inventoryMap: Map<string, OwnedCard>, seeds: number[]): TeamLoadout {
