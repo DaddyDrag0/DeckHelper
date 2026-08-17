@@ -14,6 +14,7 @@ import { auraSelection } from '../app-types'
 import type { AuraSelection, TeamCard, TeamLoadout } from '../types'
 import { createBattleStateV2, simulateBattleV2 } from '../engine/battle-v2'
 import { generateDepthsTeam } from '../engine/depths'
+import { simulateDepthsBatch } from '../engine/simulation'
 import { getPower } from '../engine/stats'
 import { cardVariantKey, canonicalBorders, teamCardVariantKey } from '../card-variants'
 
@@ -535,22 +536,27 @@ function metricStats(values: number[], trusted: boolean, unsupported: Set<string
 
 function finalMetrics(
   loadout: TeamLoadout,
-  center: number,
+  _center: number,
   seedCount: number,
   seeds: number[],
   runtime: SearchRuntime,
   maxFloor: number,
 ): TeamMetrics {
-  const values: number[] = []
-  let trusted = true
-  const unsupported = new Set<string>()
-  for (let index = 0; index < seedCount; index++) {
-    const threshold = estimateThreshold(loadout, [seeds[index % seeds.length]], runtime, maxFloor, center, 7)
-    values.push(threshold.estimate)
-    trusted = trusted && threshold.trusted
-    for (const ability of threshold.unsupported) unsupported.add(ability)
-  }
-  return metricStats(values, trusted, unsupported)
+  // Final recommendations must measure actual Depths survival, not an isolated-floor
+  // power threshold. This is the same sequential batch used by the Depths calc:
+  // start at floor 1, generate each floor from the run seed, and stop at the first loss.
+  const batch = simulateDepthsBatch(loadout, {
+    runs: seedCount,
+    floorCap: maxFloor,
+    seed: seeds[0] ?? 1,
+    battleTurnCap: 10_000,
+  })
+  runtime.simulations += batch.runs.reduce((sum, run) => sum + run.battles, 0)
+  return metricStats(
+    batch.runs.map((run) => run.deathFloor),
+    batch.trusted,
+    new Set(batch.unsupportedAbilities),
+  )
 }
 
 function compareRankedTeams(a: RankedTeam, b: RankedTeam): number {
@@ -711,7 +717,7 @@ export function searchBestTeams(
   runtime.finalists = finalists.length
   runtime.fullySimulated = 0
   runtime.fullySimulatedTotal = finalists.length
-  emitProgress(runtime, 'final', onProgress, undefined, 'Running independent randomized final measurements')
+  emitProgress(runtime, 'final', onProgress, undefined, 'Running exact sequential Depths batches for finalists')
 
   const results: RankedTeam[] = []
   for (let index = 0; index < finalists.length; index++) {
