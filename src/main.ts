@@ -1,4 +1,5 @@
 import './styles.css'
+import './aura-workspace.css'
 import { DeckHelperApp } from './app'
 
 const root = document.querySelector<HTMLElement>('#app')

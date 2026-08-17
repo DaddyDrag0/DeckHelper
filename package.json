@@ -10,7 +10,7 @@
     "test:engine": "tsx scripts/engine-smoke.ts && tsx scripts/stall-regression.ts && tsx scripts/ability-trace-regression.ts && tsx scripts/announcement-balance-regression.ts && tsx scripts/anubis-regression.ts && tsx scripts/combat-corrections-regression.ts && tsx scripts/insatiable-unholy-regression.ts && tsx scripts/order-cosmos-regression.ts && tsx scripts/revive-grinch-regression.ts",
     "test:depths": "tsx scripts/depths-regression.ts && tsx scripts/depths-rewards-regression.ts && tsx scripts/depths-time-regression.ts && tsx scripts/watchdog-heartbeat-regression.ts",
     "test:player": "tsx scripts/player-coverage.ts",
-    "test:optimizer": "tsx scripts/optimizer-smoke.ts && tsx scripts/inventory-variant-regression.ts && tsx scripts/workspace-regression.ts && tsx scripts/inventory-code-regression.ts",
+    "test:optimizer": "tsx scripts/optimizer-smoke.ts && tsx scripts/inventory-variant-regression.ts && tsx scripts/workspace-regression.ts && tsx scripts/aura-workspace-regression.ts && tsx scripts/inventory-code-regression.ts",
     "check": "npm run build && npm run test:data && npm run test:engine && npm run test:depths && npm run test:player && npm run test:optimizer",
     "preview": "vite preview"
   },

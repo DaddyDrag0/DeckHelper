@@ -20,7 +20,7 @@ import { borderKey, cardVariantKey, canonicalBorders, firstUnusedBorderVariant, 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
 
-type Tab = 'pool' | 'optimize' | 'decks'
+type Tab = 'pool' | 'auras' | 'optimize' | 'decks'
 type Ranking = 'average' | 'median' | 'minimum' | 'maximum' | 'consistency'
 
 export class DeckHelperApp {
@@ -86,7 +86,7 @@ export class DeckHelperApp {
 
   private render() {
     this.syncCurrentDeck()
-    const workspace = this.tab === 'pool' ? this.renderPool() : this.tab === 'optimize' ? this.renderOptimize() : this.renderDecks()
+    const workspace = this.tab === 'pool' ? this.renderPool() : this.tab === 'auras' ? this.renderAuras() : this.tab === 'optimize' ? this.renderOptimize() : this.renderDecks()
     this.root.innerHTML = `
       <div class="app-shell">
         <header class="topbar">
@@ -105,6 +105,7 @@ export class DeckHelperApp {
           <section class="workspace-left">
             <nav class="workspace-tabs">
               ${this.tabButton('pool', 'Pool')}
+              ${this.tabButton('auras', 'Auras')}
               ${this.tabButton('optimize', 'Optimize')}
               ${this.tabButton('decks', 'Saved Decks')}
             </nav>
@@ -117,7 +118,7 @@ export class DeckHelperApp {
   }
 
   private tabButton(tab: Tab, label: string) {
-    const count = tab === 'pool' ? this.poolCatalogCards().length : tab === 'decks' ? this.state.favorites.length : this.results.length
+    const count = tab === 'pool' ? this.poolCatalogCards().length : tab === 'auras' ? this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length : tab === 'decks' ? this.state.favorites.length : this.results.length
     return `<button class="workspace-tab ${this.tab === tab ? 'active' : ''}" data-action="tab" data-tab="${tab}"><span>${label}</span><b>${count}</b></button>`
   }
 
@@ -155,8 +156,6 @@ export class DeckHelperApp {
         return !query || owned.cardName.toLowerCase().includes(query) || (definition?.ability || '').toLowerCase().includes(query) || borderLabel(owned.borders).toLowerCase().includes(query)
       })
       .sort((left, right) => left.cardName.localeCompare(right.cardName) || borderKey(left.borders).localeCompare(borderKey(right.borders)))
-    const auraQuery = this.auraSearch.trim().toLowerCase()
-    const filteredAuras = auras.filter((aura) => !auraQuery || aura.name.toLowerCase().includes(auraQuery) || (aura.skillName || '').toLowerCase().includes(auraQuery))
     return `
       <div class="inventory-side-head">
         <div><span class="eyebrow">Drop destination</span><h2>Your Inventory</h2></div>
@@ -180,23 +179,6 @@ export class DeckHelperApp {
       <div class="inventory-variant-list">
         ${variants.length ? variants.map((owned) => this.renderInventoryCard(owned)).join('') : `<div class="inventory-empty">${this.state.inventory.cards.length ? 'No variants match this search.' : 'Add your first card above.'}</div>`}
       </div>
-      <section class="aura-inventory-panel">
-        <div class="aura-inventory-head">
-          <div><span class="eyebrow">Aura Inventory</span><h3>Owned Auras</h3></div>
-          <span>Each aura uses exactly one border: Base, Platinum, Crystal, or Galaxy. Aura borders never stack.</span>
-        </div>
-        <label class="inventory-search"><span>Search auras</span><input id="aura-search" value="${escapeHtml(this.auraSearch)}" placeholder="Aura name or skill"></label>
-        <div class="aura-columns">
-          <div class="aura-column">
-            <div class="aura-column-head"><strong>Stat Auras</strong><span>${this.state.inventory.statAuras.length} owned</span></div>
-            ${filteredAuras.filter((aura) => aura.type === 'Stat').map((aura) => this.renderInventoryAura(aura.name, 'stat')).join('')}
-          </div>
-          <div class="aura-column">
-            <div class="aura-column-head"><strong>Ability Auras</strong><span>${this.state.inventory.abilityAuras.length} owned</span></div>
-            ${filteredAuras.filter((aura) => aura.type === 'Skill').map((aura) => this.renderInventoryAura(aura.name, 'ability')).join('')}
-          </div>
-        </div>
-      </section>
     `
   }
 
@@ -291,6 +273,31 @@ export class DeckHelperApp {
         <label class="pool-search"><span>Search Pool</span><input id="pool-search" value="${escapeHtml(this.poolSearch)}" placeholder="Card name, ability, weather, or pack"></label>
         <div class="pool-catalog-summary"><strong>${visible.length}</strong><span>of ${total} Pool cards shown</span><em>Border selection changes the card frame before you drag it.</em></div>
         <div class="pool-catalog-grid">${visible.map((card) => this.renderPoolCard(card)).join('')}</div>
+      </section>
+    `
+  }
+
+  private renderAuras() {
+    const query = this.auraSearch.trim().toLowerCase()
+    const visible = auras.filter((aura) => !query || aura.name.toLowerCase().includes(query) || (aura.skillName || '').toLowerCase().includes(query))
+    const ownedCount = this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length
+    return `
+      <section class="page-head split">
+        <div><span class="eyebrow">Aura catalog</span><h2>Auras</h2><p>Select the one aura border you own, then add it to Your Inventory. Aura borders never stack and only use Base, Platinum, Crystal, or Galaxy.</p></div>
+      </section>
+      <section class="panel aura-workspace">
+        <label class="inventory-search aura-workspace-search"><span>Search Auras</span><input id="aura-search" value="${escapeHtml(this.auraSearch)}" placeholder="Aura name or skill"></label>
+        <div class="aura-workspace-summary"><strong>${visible.length}</strong><span>of ${auras.length} auras shown</span><em>${ownedCount} owned</em></div>
+        <div class="aura-columns">
+          <div class="aura-column">
+            <div class="aura-column-head"><strong>Stat Auras</strong><span>${this.state.inventory.statAuras.length} owned</span></div>
+            ${visible.filter((aura) => aura.type === 'Stat').map((aura) => this.renderInventoryAura(aura.name, 'stat')).join('')}
+          </div>
+          <div class="aura-column">
+            <div class="aura-column-head"><strong>Ability Auras</strong><span>${this.state.inventory.abilityAuras.length} owned</span></div>
+            ${visible.filter((aura) => aura.type === 'Skill').map((aura) => this.renderInventoryAura(aura.name, 'ability')).join('')}
+          </div>
+        </div>
       </section>
     `
   }

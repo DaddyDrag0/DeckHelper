@@ -1,0 +1,11 @@
+.workspace-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}
+.aura-workspace{padding:14px}
+.aura-workspace-search{margin:0 0 10px}
+.aura-workspace-summary{display:flex;align-items:baseline;gap:7px;margin:0 2px 12px;color:#7d8998;font-size:10px}
+.aura-workspace-summary strong{color:#eef4fb;font-size:16px}
+.aura-workspace-summary em{margin-left:auto;color:#94a2b2;font-style:normal}
+.aura-workspace .aura-columns{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:12px}
+.aura-workspace .aura-column{min-width:0}
+.aura-workspace .aura-catalog-row{margin-bottom:8px}
+@media(max-width:900px){.aura-workspace .aura-columns{grid-template-columns:1fr}}
+@media(max-width:680px){.workspace-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}}
