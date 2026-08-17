@@ -154,9 +154,9 @@
         <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>Unranked shortlist · export to Depths for detailed testing</span></section>
         <section class="result-list">${i.map(e=>this.renderResult(e)).join(``)}</section>
       `:`<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`Your Inventory needs at least 4 copies.`:`No optimizer results yet.`}</strong><span>${this.state.inventory.cards.reduce((e,t)=>e+t.quantity,0)<4?`Drag cards from Pool into Your Inventory on the right.`:`Start the search when you are ready.`}</span></section>`}
-    `}renderProgress(e){return`
+    `}renderProgress(e){let t={prepare:`Preparing candidates`,quick:`Quick testing`,middle:`Refining candidates`,order:`Optimizing order + auras`,final:`Final simulations`,replacement:`Testing replacements`},n=e.phase===`final`||e.phase===`replacement`?`Depths median ${G(e.currentBest?.metrics.medianDepth??0)}`:`Quick power estimate ~ ${G(e.currentBest?.metrics.medianDepth??0)}`;return`
       <section class="progress-card panel">
-        <div class="progress-title"><strong>${{prepare:`Preparing candidates`,quick:`Quick testing`,middle:`Refining candidates`,order:`Optimizing order + auras`,final:`Final simulations`,replacement:`Testing replacements`}[e.phase]}</strong><span>${W(e.message||``)}</span></div>
+        <div class="progress-title"><strong>${t[e.phase]}</strong><span>${W(e.message||``)}</span></div>
         <div class="progress-grid">
           <div><span>Possible combinations</span><b>${G(e.possibleCombinations)}</b></div>
           <div><span>Quick tested</span><b>${G(e.quickTested)}</b></div>
@@ -165,7 +165,7 @@
           <div><span>Fully simulated</span><b>${G(e.fullySimulated)} / ${G(e.fullySimulatedTotal)}</b></div>
           <div><span>Battle simulations</span><b>${G(e.simulations)}</b></div>
         </div>
-        ${e.currentBest?`<div class="current-best"><span>Current best</span><strong>${W(J(e.currentBest.loadout))}</strong><b>Median ~ ${G(e.currentBest.metrics.medianDepth)}</b></div>`:``}
+        ${e.currentBest?`<div class="current-best"><span>Current best</span><strong>${W(J(e.currentBest.loadout))}</strong><b>${W(n)}</b></div>`:``}
       </section>
     `}recommendedResults(){return[...this.results].sort((e,t)=>t.metrics.averageDepth-e.metrics.averageDepth||t.metrics.medianDepth-e.metrics.medianDepth||t.metrics.minimumDepth-e.metrics.minimumDepth||e.metrics.consistency-t.metrics.consistency||e.id.localeCompare(t.id)).slice(0,10)}renderResult(e){return`
       <article class="result-card">

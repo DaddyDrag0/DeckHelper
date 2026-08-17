@@ -359,6 +359,9 @@ export class DeckHelperApp {
     const phaseLabel: Record<OptimizerProgress['phase'], string> = {
       prepare: 'Preparing candidates', quick: 'Quick testing', middle: 'Refining candidates', order: 'Optimizing order + auras', final: 'Final simulations', replacement: 'Testing replacements',
     }
+    const currentBestMetric = progress.phase === 'final' || progress.phase === 'replacement'
+      ? `Depths median ${formatNumber(progress.currentBest?.metrics.medianDepth ?? 0)}`
+      : `Quick power estimate ~ ${formatNumber(progress.currentBest?.metrics.medianDepth ?? 0)}`
     return `
       <section class="progress-card panel">
         <div class="progress-title"><strong>${phaseLabel[progress.phase]}</strong><span>${escapeHtml(progress.message || '')}</span></div>
@@ -370,7 +373,7 @@ export class DeckHelperApp {
           <div><span>Fully simulated</span><b>${formatNumber(progress.fullySimulated)} / ${formatNumber(progress.fullySimulatedTotal)}</b></div>
           <div><span>Battle simulations</span><b>${formatNumber(progress.simulations)}</b></div>
         </div>
-        ${progress.currentBest ? `<div class="current-best"><span>Current best</span><strong>${escapeHtml(deckLabel(progress.currentBest.loadout))}</strong><b>Median ~ ${formatNumber(progress.currentBest.metrics.medianDepth)}</b></div>` : ''}
+        ${progress.currentBest ? `<div class="current-best"><span>Current best</span><strong>${escapeHtml(deckLabel(progress.currentBest.loadout))}</strong><b>${escapeHtml(currentBestMetric)}</b></div>` : ''}
       </section>
     `
   }
