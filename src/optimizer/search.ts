@@ -545,7 +545,7 @@ function finalMetrics(
   let trusted = true
   const unsupported = new Set<string>()
   for (let index = 0; index < seedCount; index++) {
-    const threshold = estimateThreshold(loadout, [seeds[index % seeds.length]], runtime, maxFloor, center, 5)
+    const threshold = estimateThreshold(loadout, [seeds[index % seeds.length]], runtime, maxFloor, center, 7)
     values.push(threshold.estimate)
     trusted = trusted && threshold.trusted
     for (const ability of threshold.unsupported) unsupported.add(ability)
@@ -711,12 +711,17 @@ export function searchBestTeams(
   runtime.finalists = finalists.length
   runtime.fullySimulated = 0
   runtime.fullySimulatedTotal = finalists.length
-  emitProgress(runtime, 'final', onProgress, undefined, 'Running final shared-seed measurements')
+  emitProgress(runtime, 'final', onProgress, undefined, 'Running independent randomized final measurements')
 
   const results: RankedTeam[] = []
   for (let index = 0; index < finalists.length; index++) {
     const candidate = finalists[index]
-    const metrics = finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, searchSeeds, runtime, settings.maxFloor)
+    // Shared random seeds are useful while pruning, because every candidate gets the
+    // same benchmark. The final shortlist is intentionally different: each finalist
+    // gets its own fresh randomized Depths samples so it does not replay the same
+    // enemy sequence as every other finalist.
+    const finalistSeeds = makeSearchSeeds(settings.finalSeedCount)
+    const metrics = finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor)
     results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.quickEstimate })
     runtime.fullySimulated = index + 1
     const best = [...results].sort(compareRankedTeams)[0]
