@@ -349,8 +349,8 @@ export class DeckHelperApp {
       </section>
       ${this.progress ? this.renderProgress(this.progress) : ''}
       ${this.results.length ? `
-        <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>Ranked by expected Depths performance</span></section>
-        <section class="result-list">${sorted.map((result, index) => this.renderResult(result, index + 1)).join('')}</section>
+        <section class="results-head"><h3>Top 10 Recommended Teams</h3><span>Unranked shortlist · export to Depths for detailed testing</span></section>
+        <section class="result-list">${sorted.map((result) => this.renderResult(result)).join('')}</section>
       ` : `<section class="empty-state panel"><strong>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Your Inventory needs at least 4 copies.' : 'No optimizer results yet.'}</strong><span>${this.state.inventory.cards.reduce((sum, card) => sum + card.quantity, 0) < 4 ? 'Drag cards from Pool into Your Inventory on the right.' : 'Start the search when you are ready.'}</span></section>`}
     `
   }
@@ -387,23 +387,15 @@ export class DeckHelperApp {
       .slice(0, 10)
   }
 
-  private renderResult(result: RankedTeam, rank: number) {
+  private renderResult(result: RankedTeam) {
     return `
       <article class="result-card">
-        <div class="result-rank">#${rank}</div>
         <div class="result-content">
           <div class="team-slots">${result.loadout.cards.map((card, index) => {
             const definition = cards.find((entry) => entry.name === card.cardName)
             return `<div class="team-slot">${this.renderCardVisual(card.cardName, card.borders, true)}<div><span>Slot ${index + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small><small class="team-slot-support">Support / ability: ${escapeHtml(definition?.ability || 'None')}</small></div></div>`
           }).join('')}</div>
           <div class="aura-line"><span>Stat: <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability: <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span></div>
-          <div class="metrics">
-            <div><span>Average</span><b>${formatNumber(result.metrics.averageDepth)}</b></div>
-            <div><span>Median</span><b>${formatNumber(result.metrics.medianDepth)}</b></div>
-            <div><span>Minimum</span><b>${formatNumber(result.metrics.minimumDepth)}</b></div>
-            <div><span>Maximum</span><b>${formatNumber(result.metrics.maximumDepth)}</b></div>
-            <div><span>Spread</span><b>${formatNumber(result.metrics.consistency)}</b></div>
-          </div>
           ${result.metrics.trusted ? '' : `<div class="warning">Unverified mechanics: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
         </div>
         <div class="result-actions"><button class="primary" data-action="export-result" data-result="${escapeHtml(result.id)}">Copy Export Code</button><button data-action="save-result" data-result="${escapeHtml(result.id)}">Save</button></div>
