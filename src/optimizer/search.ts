@@ -21,6 +21,10 @@ const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
 const AURA_BY_NAME = new Map(auras.map((aura) => [aura.name, aura] as const))
 
 const SEARCH_SEED_POOL_SIZE = 32
+const FULL_QUICK_SCAN_LIMIT = 5_000
+const SMALL_SEARCH_MIDDLE_CAP = 300
+const SMALL_SEARCH_ORDER_CAP = 48
+const SMALL_SEARCH_FINALIST_CAP = 20
 
 function makeSearchSeeds(count = SEARCH_SEED_POOL_SIZE): number[] {
   const size = Math.max(1, Math.floor(count))
@@ -605,9 +609,17 @@ export function searchBestTeams(
     }
   })
 
-  candidates = preselectByHeuristic(candidates, settings.quickCandidateCap)
+  const exhaustiveQuick = generated.possible <= FULL_QUICK_SCAN_LIMIT && generated.sets.length === generated.possible
+  const quickCandidateCap = exhaustiveQuick ? candidates.length : settings.quickCandidateCap
+  candidates = preselectByHeuristic(candidates, quickCandidateCap)
   runtime.remainingCandidates = candidates.length
-  emitProgress(runtime, 'quick', onProgress, undefined, 'Quick adaptive search')
+  emitProgress(
+    runtime,
+    'quick',
+    onProgress,
+    undefined,
+    exhaustiveQuick ? `Testing all ${generated.possible.toLocaleString()} team combinations` : 'Quick adaptive search',
+  )
 
   for (let index = 0; index < candidates.length; index++) {
     const candidate = candidates[index]
@@ -629,7 +641,10 @@ export function searchBestTeams(
   }
 
   candidates.sort((a, b) => b.quickEstimate - a.quickEstimate || b.heuristic - a.heuristic)
-  candidates = candidates.slice(0, Math.min(settings.middleCandidateCap, candidates.length))
+  const middleCandidateCap = exhaustiveQuick
+    ? Math.max(settings.middleCandidateCap, SMALL_SEARCH_MIDDLE_CAP)
+    : settings.middleCandidateCap
+  candidates = candidates.slice(0, Math.min(middleCandidateCap, candidates.length))
   runtime.remainingCandidates = candidates.length
   emitProgress(runtime, 'middle', onProgress, undefined, 'Refining stronger candidates with shared seeds')
 
@@ -646,7 +661,8 @@ export function searchBestTeams(
   }
 
   candidates.sort((a, b) => b.middleEstimate - a.middleEstimate || b.quickEstimate - a.quickEstimate)
-  const orderCandidates = candidates.slice(0, Math.min(24, candidates.length))
+  const orderCandidateCap = exhaustiveQuick ? SMALL_SEARCH_ORDER_CAP : 24
+  const orderCandidates = candidates.slice(0, Math.min(orderCandidateCap, candidates.length))
   runtime.finalists = orderCandidates.length
   emitProgress(runtime, 'order', onProgress, undefined, 'Optimizing auras and card order')
 
@@ -665,7 +681,10 @@ export function searchBestTeams(
     return candidate
   }).sort((a, b) => b.middleEstimate - a.middleEstimate)
 
-  const finalists = rechecked.slice(0, Math.min(settings.finalistCap, rechecked.length))
+  const finalistCap = exhaustiveQuick
+    ? Math.max(settings.finalistCap, SMALL_SEARCH_FINALIST_CAP)
+    : settings.finalistCap
+  const finalists = rechecked.slice(0, Math.min(finalistCap, rechecked.length))
   runtime.finalists = finalists.length
   runtime.fullySimulated = 0
   runtime.fullySimulatedTotal = finalists.length
