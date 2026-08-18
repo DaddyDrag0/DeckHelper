@@ -96,3 +96,5 @@ jobs:
           git add -A
           git commit -m "Update Depths bans and enemy pool"
           git push origin HEAD:main
+
+# trigger
