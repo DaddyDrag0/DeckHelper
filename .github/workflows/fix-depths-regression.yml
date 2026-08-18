@@ -1,0 +1,28 @@
+name: Fix Depths regression
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-depths-regression.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python3 scripts/fix-depths-regression.py
+      - name: Publish cleanup
+        run: |
+          rm .github/workflows/fix-depths-regression.yml scripts/fix-depths-regression.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Tighten Depths regression coverage"
+          git pull --rebase origin main
+          git push origin HEAD:main
