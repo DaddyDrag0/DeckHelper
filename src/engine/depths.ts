@@ -3,12 +3,9 @@ import type { CardDefinition, DepthsEnemy } from '../types'
 import { getAttack, getHealth } from './stats'
 import { SeededRng } from './rng'
 
-const HARD_EXCLUSIONS = new Set([
-  'Samurai', 'Seraphim', 'Vampire Lord', 'Loki', 'Fuxi', 'Parallax',
-  'Nán Fāng Zhū Què', 'Brachiosaurus', 'Jersey Devil',
-])
+const HARD_EXCLUSIONS = new Set(['Vampire Lord'])
 
-export const MAX_DEPTH_BANS = 10
+export const MAX_DEPTH_BANS = 12
 
 function normalizeDepthBans(names: readonly string[] | undefined): string[] {
   if (!names?.length) return []

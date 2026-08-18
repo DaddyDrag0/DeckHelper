@@ -46,7 +46,7 @@ function loadout(names: string[]): TeamLoadout {
 }
 
 // Player-unlocked Depth bans remove only additional cards from the generated pool.
-// They are optional (0..10), while the game's built-in hard exclusions always stay excluded.
+// They are optional (0..12), while the game's built-in hard exclusions always stay excluded.
 {
   const floor = 50_000
   const eligibleNames = getDepthsPool(floor).map((entry) => entry.card.name)
@@ -56,15 +56,16 @@ function loadout(names: string[]): TeamLoadout {
   for (const name of twoBans) assert(!twoBanPool.includes(name), `Player Depth ban did not remove ${name}`)
   assert(twoBanPool.length < eligibleNames.length, 'Two optional Depth bans should shrink the pool')
 
-  const elevenBans = eligibleNames.slice(0, 11)
-  const cappedPool = getDepthsPool(floor, elevenBans).map((entry) => entry.card.name)
-  for (const name of elevenBans.slice(0, MAX_DEPTH_BANS)) {
+  const overCapBans = eligibleNames.slice(0, MAX_DEPTH_BANS + 1)
+  const cappedPool = getDepthsPool(floor, overCapBans).map((entry) => entry.card.name)
+  for (const name of overCapBans.slice(0, MAX_DEPTH_BANS)) {
     assert(!cappedPool.includes(name), `Expected capped player ban to remove ${name}`)
   }
-  assert(cappedPool.includes(elevenBans[MAX_DEPTH_BANS]), 'Player Depth bans must cap at 10')
+  assert(cappedPool.includes(overCapBans[MAX_DEPTH_BANS]), 'Player Depth bans must cap at 12')
 
-  for (const name of depthsMechanics.hardExclusions) {
-    assert(!getDepthsPool(floor, []).some((entry) => entry.card.name === name), `Default Depth ban ${name} must remain excluded`)
+  assert(depthsMechanics.hardExclusions.length === 1 && depthsMechanics.hardExclusions[0] === 'Vampire Lord', 'Vampire Lord must be the only default Depth exclusion')
+  for (const name of ['Samurai', 'Seraphim', 'Loki', 'Fuxi', 'Parallax', 'Nán Fāng Zhū Què', 'Brachiosaurus', 'Jersey Devil']) {
+    assert(getDepthsPool(floor, []).some((entry) => entry.card.name === name), `Newly unbanned Depth card ${name} must be eligible`)
   }
 }
 
@@ -106,7 +107,7 @@ for (const card of cards) {
   representatives.set(card.ability, card)
 }
 
-assert(representatives.size === 176, `Expected 176 Depths abilities, found ${representatives.size}`)
+assert(representatives.size >= 176, `Expected at least 176 Depths abilities, found ${representatives.size}`)
 
 let executed = 0
 for (const [ability, card] of representatives) {

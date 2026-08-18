@@ -13,6 +13,7 @@ import {
 } from './app-types'
 import { searchBestTeams, searchReplacements, type ExactDepthsBatchRunner } from './optimizer/search'
 import type { DepthsBatchResult } from './engine/simulation'
+import { MAX_DEPTH_BANS } from './engine/depths'
 import type { AuraSelection, TeamLoadout } from './types'
 
 const worker = self as DedicatedWorkerGlobalScope
@@ -139,7 +140,7 @@ async function expandAbilityAuraVariants(
   const floorCap = Math.max(100, Math.floor(settings?.maxFloor ?? 100_000))
   const defaultFinalRuns = fastMode ? 5 : 15
   const finalRuns = Math.max(3, Math.floor(settings?.finalSeedCount ?? defaultFinalRuns)) | 1
-  const bans = (bannedCardNames ?? []).slice(0, 10)
+  const bans = (bannedCardNames ?? []).slice(0, MAX_DEPTH_BANS)
   const alternates: RankedTeam[] = []
 
   for (let deckIndex = 0; deckIndex < deckLimit; deckIndex++) {

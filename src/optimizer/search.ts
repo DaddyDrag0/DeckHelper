@@ -13,7 +13,7 @@ import type {
 import { auraSelection } from '../app-types'
 import type { AuraSelection, TeamCard, TeamLoadout } from '../types'
 import { createBattleStateV2, simulateBattleV2 } from '../engine/battle-v2'
-import { generateDepthsTeam } from '../engine/depths'
+import { generateDepthsTeam, MAX_DEPTH_BANS } from '../engine/depths'
 import { simulateDepthsBatch, type DepthsBatchOptions, type DepthsBatchResult } from '../engine/simulation'
 import { getPower } from '../engine/stats'
 import { cardVariantKey, canonicalBorders, teamCardVariantKey } from '../card-variants'
@@ -632,7 +632,7 @@ export async function searchBestTeams(
   const generated = generateTeamNameSets(inventory, settings.candidateCap)
   const runtime: SearchRuntime = {
     simulations: 0,
-    bannedCardNames: bannedCardNames.slice(0, 10),
+    bannedCardNames: bannedCardNames.slice(0, MAX_DEPTH_BANS),
     possibleCombinations: generated.possible,
     quickTested: 0,
     remainingCandidates: generated.sets.length,
@@ -824,7 +824,7 @@ export async function searchReplacements(
   })
   const runtime: SearchRuntime = {
     simulations: 0,
-    bannedCardNames: bannedCardNames.slice(0, 10),
+    bannedCardNames: bannedCardNames.slice(0, MAX_DEPTH_BANS),
     possibleCombinations: choices.length,
     quickTested: 0,
     remainingCandidates: choices.length,

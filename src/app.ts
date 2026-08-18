@@ -364,7 +364,7 @@ export class DeckHelperApp {
         </div>
         ${this.state.depthBans.length ? `<div class="depth-ban-chips">${this.state.depthBans.map((name) => `<button data-action="depth-ban-remove" data-name="${escapeHtml(name)}" ${this.worker ? 'disabled' : ''}>${escapeHtml(name)} ×</button>`).join('')}</div>` : ''}
         <div class="depth-ban-search">
-          <input id="depth-ban-search" value="${escapeHtml(this.depthBanQuery)}" placeholder="${this.state.depthBans.length >= MAX_DEPTH_BANS ? '10/10 bans selected' : 'Search an enemy card to ban'}" autocomplete="off" ${this.worker || this.state.depthBans.length >= MAX_DEPTH_BANS ? 'disabled' : ''}>
+          <input id="depth-ban-search" value="${escapeHtml(this.depthBanQuery)}" placeholder="${this.state.depthBans.length >= MAX_DEPTH_BANS ? '12/12 bans selected' : 'Search an enemy card to ban'}" autocomplete="off" ${this.worker || this.state.depthBans.length >= MAX_DEPTH_BANS ? 'disabled' : ''}>
           ${banQuery && !this.worker && this.state.depthBans.length < MAX_DEPTH_BANS ? `<div class="depth-ban-suggestions">${banCandidates.length ? banCandidates.map((card) => `<button data-action="depth-ban-add" data-name="${escapeHtml(card.name)}"><strong>${escapeHtml(card.name)}</strong><span>${escapeHtml(card.ability || 'No ability')}</span></button>`).join('') : '<small>No eligible Depth enemies found.</small>'}</div>` : ''}
         </div>
       </section>
