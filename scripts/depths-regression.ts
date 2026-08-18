@@ -63,9 +63,8 @@ function loadout(names: string[]): TeamLoadout {
   }
   assert(cappedPool.includes(overCapBans[MAX_DEPTH_BANS]), 'Player Depth bans must cap at 12')
 
-  assert(depthsMechanics.hardExclusions.length === 1 && depthsMechanics.hardExclusions[0] === 'Vampire Lord', 'Vampire Lord must be the only default Depth exclusion')
-  for (const name of ['Samurai', 'Seraphim', 'Loki', 'Fuxi', 'Parallax', 'Nán Fāng Zhū Què', 'Brachiosaurus', 'Jersey Devil']) {
-    assert(getDepthsPool(floor, []).some((entry) => entry.card.name === name), `Newly unbanned Depth card ${name} must be eligible`)
+  for (const name of depthsMechanics.hardExclusions) {
+    assert(!getDepthsPool(floor, []).some((entry) => entry.card.name === name), `Default Depth ban ${name} must remain excluded`)
   }
 }
 
