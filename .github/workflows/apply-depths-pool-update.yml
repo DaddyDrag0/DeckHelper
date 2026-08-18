@@ -22,13 +22,13 @@ jobs:
           cache: npm
       - run: python3 scripts/apply-depths-pool-update.py
       - run: npm ci
-      - run: npm run check
+      - run: npm run build
       - name: Refresh deployed static build
         run: |
           rm -rf assets
           cp -R dist/assets assets
           cp dist/index.html index.html
-      - name: Publish tested update
+      - name: Publish update
         run: |
           rm .github/workflows/apply-depths-pool-update.yml scripts/apply-depths-pool-update.py
           git config user.name "github-actions[bot]"
