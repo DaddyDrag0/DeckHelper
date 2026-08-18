@@ -26,3 +26,5 @@ jobs:
           git commit -m "Tighten Depths regression coverage"
           git pull --rebase origin main
           git push origin HEAD:main
+
+# run
