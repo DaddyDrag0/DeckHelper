@@ -1,0 +1,45 @@
+name: Add Mother of Beasts to Seven Sins
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/add-mother-seven-sins.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Update Desmond boosted cards
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('src/data/auras-1.json')
+          data = json.loads(p.read_text())
+          aura = next(a for a in data if a['name'] == 'Desmond Of Despair')
+          if 'Mother of Beasts' not in aura['boostedCards']:
+              aura['boostedCards'].append('Mother of Beasts')
+          p.write_text(json.dumps(data, separators=(',', ':'), ensure_ascii=False) + '\n')
+          PY
+      - run: npm ci
+      - run: npm run check
+      - name: Publish update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/add-mother-seven-sins.yml
+          git add -A
+          git commit -m "Treat Mother of Beasts as Seven Sins"
+          git pull --rebase origin main
+          git push origin HEAD:main
