@@ -1,8 +1,9 @@
-name: Fix Inventory Removal
+name: DeckHelper UI Hotfix
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - '.github/workflows/inventory-remove-fix.yml'
 
@@ -20,83 +21,23 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      - name: Fix inventory removal behavior
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path('src/revamp.ts')
-          s = p.read_text()
-
-          old = """  private changeQuantity(encodedKey: string, delta: number) {
-    const card = this.findOwned(encodedKey)
-    if (!card) return
-    card.quantity = Math.max(1, Math.min(999, card.quantity + delta))
-    this.persist(); this.render()
-  }"""
-          new = """  private changeQuantity(encodedKey: string, delta: number) {
-    const card = this.findOwned(encodedKey)
-    if (!card) return
-    if (delta < 0 && card.quantity <= 1) {
-      this.removeCard(encodedKey)
-      return
-    }
-    card.quantity = Math.max(1, Math.min(999, card.quantity + delta))
-    this.persist(); this.render()
-  }"""
-          if old not in s:
-            raise SystemExit('changeQuantity block not found')
-          s = s.replace(old, new, 1)
-
-          old = """        ${locked ? `<div class=\"rv-position\"><span>Position</span>${['Any', '1', '2', '3', '4'].map((label, index) => {
-          const value = index - 1
-          const active = value === -1 ? card.lockedPosition === null : card.lockedPosition === value
-          return `<button class=\"${active ? 'active' : ''}\" data-action=\"card-position\" data-key=\"${key}\" data-position=\"${value}\">${label}</button>`
-        }).join('')}</div>` : ''}
-      </div>"""
-          new = """        ${locked ? `<div class=\"rv-position\"><span>Position</span>${['Any', '1', '2', '3', '4'].map((label, index) => {
-          const value = index - 1
-          const active = value === -1 ? card.lockedPosition === null : card.lockedPosition === value
-          return `<button class=\"${active ? 'active' : ''}\" data-action=\"card-position\" data-key=\"${key}\" data-position=\"${value}\">${label}</button>`
-        }).join('')}</div>` : ''}
-        <button class=\"rv-remove-card\" data-action=\"remove-card\" data-key=\"${key}\">Remove</button>
-      </div>"""
-          if old not in s:
-            raise SystemExit('lock control block not found')
-          s = s.replace(old, new, 1)
-
-          old = """        <span>Borders</span><div class=\"rv-border-row\">${CARD_BORDERS.map((border) => `<button class=\"rv-border ${card.borders.includes(border) ? 'active' : ''}\" data-action=\"owned-border\" data-key=\"${key}\" data-border=\"${border}\">${border[0]}</button>`).join('')}</div>
-        <button class=\"rv-danger-link\" data-action=\"remove-card\" data-key=\"${key}\">Remove card</button>"""
-          new = """        <span>Borders</span><div class=\"rv-border-row\">${CARD_BORDERS.map((border) => `<button class=\"rv-border ${card.borders.includes(border) ? 'active' : ''}\" data-action=\"owned-border\" data-key=\"${key}\" data-border=\"${border}\">${border[0]}</button>`).join('')}</div>"""
-          if old not in s:
-            raise SystemExit('advanced remove block not found')
-          s = s.replace(old, new, 1)
-          p.write_text(s)
-
-          css = Path('src/revamp.css')
-          c = css.read_text()
-          rule = '.rv-remove-card{border:1px solid #4d2b31;background:#211417;color:#d98b93;border-radius:8px;padding:6px 10px;font-size:10px;font-weight:750}.rv-remove-card:hover{background:#2b181c;border-color:#704049}'
-          if '.rv-remove-card{' not in c:
-            css.write_text(c + rule)
-          PY
-
+      - name: Apply inventory and power estimate fixes
+        run: python3 .github/scripts/deckhelper-ui-hotfix.py
       - run: npm ci
       - name: Run full checks
         run: npm run check
-
       - name: Refresh GitHub Pages build
         run: |
           rm -rf assets
           cp -R dist/assets assets
           cp dist/index.html index.html
-
       - name: Commit and publish
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -f .github/workflows/inventory-remove-fix.yml
+          rm -f .github/scripts/deckhelper-ui-hotfix.py
           git add -A
-          git commit -m "Make inventory cards easy to remove"
+          git commit -m "Restore power estimate and simplify card removal"
           git pull --rebase origin main
           git push origin main
