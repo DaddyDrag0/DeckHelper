@@ -1,3 +1,4 @@
+# one-time DeckHelper hotfix workflow
 name: DeckHelper Selection Limits Hotfix
 
 on:
@@ -146,7 +147,6 @@ jobs:
 
           p.write_text(s)
 
-          # Sanity checks: all requested rules must now be represented in source.
           checks = [
               'const MAX_SELECTED_CARDS = 15',
               'const MAX_STAT_AURAS = 4',
