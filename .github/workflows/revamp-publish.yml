@@ -52,9 +52,36 @@ jobs:
           cp /tmp/current-depths/src/engine/simulation.ts src/engine/simulation.ts
           cp /tmp/current-depths/src/engine/support.ts src/engine/support.ts
 
+      - name: Sync shared current regression baselines
+        run: |
+          for file in \
+            data-integrity.ts \
+            engine-smoke.ts \
+            stall-regression.ts \
+            ability-trace-regression.ts \
+            announcement-balance-regression.ts \
+            anubis-regression.ts \
+            combat-corrections-regression.ts \
+            insatiable-unholy-regression.ts \
+            order-cosmos-regression.ts \
+            revive-grinch-regression.ts \
+            depths-regression.ts \
+            depths-rewards-regression.ts \
+            depths-time-regression.ts \
+            watchdog-heartbeat-regression.ts \
+            player-coverage.ts; do
+            if [ -f "/tmp/current-depths/scripts/$file" ]; then
+              cp "/tmp/current-depths/scripts/$file" "scripts/$file"
+            fi
+          done
+          cp /tmp/current-depths/scripts/manga-update-regression.ts scripts/manga-update-regression.ts
+          cp /tmp/current-depths/scripts/new-aura-regression.ts scripts/new-aura-regression.ts
+
       - run: npm ci
       - name: Run full regression suite
         run: npm run check
+      - name: Verify newest Manga cards and auras
+        run: npx tsx scripts/manga-update-regression.ts && npx tsx scripts/new-aura-regression.ts
 
       - name: Refresh GitHub Pages build
         run: |
