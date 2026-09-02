@@ -1,0 +1,52 @@
+name: Make Inventory First
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/inventory-first.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Make inventory the first/default step
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/revamp.ts')
+          s = p.read_text()
+          s = s.replace("this.tab = this.state.inventory.cards.length ? 'optimize' : 'inventory'", "this.tab = 'inventory'")
+          old = "${this.navButton('optimize', 'Optimize', 'Find your best deck')}\n          ${this.navButton('inventory', 'Inventory', 'Add & manage cards')}\n          ${this.navButton('saved', 'Saved', 'Your saved decks')}"
+          new = "${this.navButton('inventory', 'Inventory', 'Step 1 · Add & manage cards')}\n          ${this.navButton('optimize', 'Optimize', 'Step 2 · Find your best deck')}\n          ${this.navButton('saved', 'Saved', 'Your saved decks')}"
+          if old not in s:
+              raise SystemExit('nav block not found')
+          s = s.replace(old, new)
+          p.write_text(s)
+          PY
+      - run: npm ci
+      - run: npm run check
+      - name: Refresh GitHub Pages build
+        run: |
+          rm -rf assets
+          cp -R dist/assets assets
+          cp dist/index.html index.html
+      - name: Commit and publish
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/inventory-first.yml
+          git add -A
+          git commit -m "Make Inventory the first DeckHelper step"
+          git pull --rebase origin main
+          git push origin HEAD:main
