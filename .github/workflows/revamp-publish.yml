@@ -1,0 +1,76 @@
+name: DeckHelper Revamp Sync and Build
+
+on:
+  push:
+    branches:
+      - agent/deckhelper-revamp
+    paths:
+      - '.github/workflows/revamp-publish.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/deckhelper-revamp
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Sync current game data and Depths mechanics
+        run: |
+          git clone --depth 1 https://github.com/DaddyDrag0/CardRngExpansionDepths.git /tmp/current-depths
+          cp /tmp/current-depths/src/data/abilities-1.json src/data/abilities-1.json
+          cp /tmp/current-depths/src/data/abilities-2.json src/data/abilities-2.json
+          cp /tmp/current-depths/src/data/abilities-3.json src/data/abilities-3.json
+          cp /tmp/current-depths/src/data/abilities-4.json src/data/abilities-4.json
+          cp /tmp/current-depths/src/data/ages.ts src/data/ages.ts
+          cp /tmp/current-depths/src/data/auras-1.json src/data/auras-1.json
+          cp /tmp/current-depths/src/data/auras-2.json src/data/auras-2.json
+          cp /tmp/current-depths/src/data/cards-1.json src/data/cards-1.json
+          cp /tmp/current-depths/src/data/cards-2.json src/data/cards-2.json
+          cp /tmp/current-depths/src/data/cards-3.json src/data/cards-3.json
+          cp /tmp/current-depths/src/data/cards-4.json src/data/cards-4.json
+          cp /tmp/current-depths/src/data/cards-5.json src/data/cards-5.json
+          cp /tmp/current-depths/src/data/cards-6.json src/data/cards-6.json
+          cp /tmp/current-depths/src/data/cards-7.json src/data/cards-7.json
+          cp /tmp/current-depths/src/data/thumbnails.json src/data/thumbnails.json
+          cp /tmp/current-depths/src/types.ts src/types.ts
+          cp /tmp/current-depths/src/browser-worker.ts src/browser-worker.ts
+          cp /tmp/current-depths/src/engine/auras.ts src/engine/auras.ts
+          cp /tmp/current-depths/src/engine/battle-v2.ts src/engine/battle-v2.ts
+          cp /tmp/current-depths/src/engine/combat-data.ts src/engine/combat-data.ts
+          cp /tmp/current-depths/src/engine/depths-rewards.ts src/engine/depths-rewards.ts
+          cp /tmp/current-depths/src/engine/depths-time.ts src/engine/depths-time.ts
+          cp /tmp/current-depths/src/engine/depths.ts src/engine/depths.ts
+          cp /tmp/current-depths/src/engine/simulation.ts src/engine/simulation.ts
+          cp /tmp/current-depths/src/engine/support.ts src/engine/support.ts
+
+      - run: npm ci
+      - name: Run full regression suite
+        run: npm run check
+
+      - name: Refresh GitHub Pages build
+        run: |
+          rm -rf assets
+          cp -R dist/assets assets
+          cp dist/index.html index.html
+
+      - name: Commit synced data and built site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/revamp-publish.yml
+          git add -A
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "Sync current cards and build DeckHelper revamp"
+          git pull --rebase origin agent/deckhelper-revamp
+          git push origin HEAD:agent/deckhelper-revamp
