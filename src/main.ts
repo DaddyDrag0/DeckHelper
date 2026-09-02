@@ -1,8 +1,7 @@
-import './styles.css'
-import './aura-workspace.css'
-import { DeckHelperApp } from './app'
+import './revamp.css'
+import { DeckHelperRevamp } from './revamp'
 
 const root = document.querySelector<HTMLElement>('#app')
 if (!root) throw new Error('Missing #app root')
 
-new DeckHelperApp(root).start()
+new DeckHelperRevamp(root).start()
