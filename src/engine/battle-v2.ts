@@ -80,6 +80,9 @@ const FULLY_SUPPORTED = new Set([
   'God of Trickery', 'Draconian', 'Safeguarding', 'Mother of Dragons', 'Reveal',
   'Jealousy', 'Nightmare Melody', 'Sap',
   'Bind Fate', 'Luminescent Veil', 'Ouroboros',
+  'Cosmic Rivalry', 'Divine Ascension', 'Mastered Ascension', 'Kitchen', 'Six Realms Staff',
+  'Twelve Devas Axe', 'Vajra Short Sword', 'Staff of Perfect Enlightenment', 'Shield of Ahimsa',
+  'War Scythe', 'Great Nirvana Sword - Zero',
 ])
 
 const BENCH_AFFECTING_UNSUPPORTED = new Set<string>()
@@ -93,7 +96,7 @@ const DODGE_ABILITIES = new Set([
   'Danger Sense', 'Deadly Ambush', 'Evasion', 'Untouchable', 'Guerilla Warfare',
   'The Loser', 'Invisibility', 'Limitless', 'Transcend Time', 'Snowbound',
   'Sky Drop', 'Shadow Predator', 'Run As Fast As You Can', 'Heard but not Seen',
-  'Lights Way',
+  'Lights Way', 'Mastered Ascension',
 ])
 
 const GENERAL_MOON_ZOO_ABILITY = cards.find((card) => card.name === 'General Moon Zoo')?.ability
@@ -334,6 +337,9 @@ function activeBonusAbilities(card: CombatCard): string[] {
   if ((root === "Pandora's Box" || root === 'Heroes') && ability(card) === root) {
     return card.bonusAbilities || []
   }
+  if (root === 'Six Realms Staff' && ability(card) === 'Great Nirvana Sword - Zero') {
+    return card.bonusAbilities || []
+  }
   return []
 }
 
@@ -544,7 +550,10 @@ function active(runtime: Runtime, team: BattleTeam) {
 }
 
 function hasAbility(runtime: Runtime, card: CombatCard | undefined, name: string): boolean {
-  if (!card || card.dead || card.flags.sealed || (runtime.state.boosts[card.team].noAbilities || 0) > 0) return false
+  if (!card || card.dead || card.flags.sealed) return false
+  const abilityLocked = (runtime.state.boosts[card.team].noAbilities || 0) > 0
+  const friendshipPassive = name === 'Friendship' && card.definition.ability === 'Friendship'
+  if (abilityLocked && !friendshipPassive) return false
   const opposingCard = active(runtime, OTHER_TEAM[card.team])
   const ownName = effectiveCardName(card)
   const opposingName = effectiveCardName(opposingCard)
@@ -693,6 +702,7 @@ function performEntryAttack(runtime: Runtime, card: CombatCard, mult = 1, allEne
 function onEntry(runtime: Runtime, card: CombatCard) {
   if (card.entered || !alive(card)) return
   card.entered = true
+  card.flags.appearedOnField = true
   noteUnsupported(runtime.state, card)
   const enemyTeam = OTHER_TEAM[card.team]
   const enemy = active(runtime, enemyTeam)
@@ -778,6 +788,36 @@ function onEntry(runtime: Runtime, card: CombatCard) {
       onEntry(runtime, card)
       return
     }
+  }
+
+  if (name === 'Six Realms Staff' && !card.flags.sixRealmsRolled) {
+    card.flags.sixRealmsRolled = true
+    const weapons = [
+      'Twelve Devas Axe', 'Vajra Short Sword', 'Staff of Perfect Enlightenment',
+      'Shield of Ahimsa', 'War Scythe', 'Great Nirvana Sword - Zero',
+    ]
+    card.abilityOverride = weapons[Math.floor(runtime.rng.next() * weapons.length)]
+    card.entered = false
+    onEntry(runtime, card)
+    return
+  }
+
+  if (name === 'Great Nirvana Sword - Zero' && !card.flags.zeroWeaponsRolled) {
+    card.flags.zeroWeaponsRolled = true
+    const pool = ['Twelve Devas Axe', 'Vajra Short Sword', 'Staff of Perfect Enlightenment', 'Shield of Ahimsa', 'War Scythe']
+    const firstIndex = Math.floor(runtime.rng.next() * pool.length)
+    const first = pool[firstIndex]
+    const remaining = pool.filter((_, index) => index !== firstIndex)
+    const second = remaining[Math.floor(runtime.rng.next() * remaining.length)]
+    card.bonusAbilities = [first, second]
+    for (const gained of card.bonusAbilities) {
+      withAbility(card, gained, () => {
+        card.entered = false
+        onEntry(runtime, card)
+      })
+    }
+    card.entered = true
+    return
   }
 
   const entryTraceBefore = runtime.captureDebug ? captureAbilityTrace(runtime) : null
@@ -955,7 +995,7 @@ function onEntry(runtime: Runtime, card: CombatCard) {
       break
     }
     case 'Fire World':
-      for (const target of runtime.state.teams[enemyTeam]) target.status.burn = 100
+      for (const target of runtime.state.teams[enemyTeam]) target.status.burn = 3
       break
     case 'Book of Death':
       enemy.counters.death = 2
@@ -1210,6 +1250,43 @@ function onEntry(runtime: Runtime, card: CombatCard) {
       resolveDeaths(runtime)
       break
     }
+    case 'Cosmic Rivalry':
+      performEntryAttack(runtime, card, 3)
+      break
+    case 'Kitchen': {
+      card.flags.kitchenDomain = true
+      const hits = 2 + Math.floor(runtime.rng.next() * 4)
+      for (let hit = 0; hit < hits; hit++) {
+        const target = active(runtime, enemyTeam)
+        if (!target || !alive(card)) break
+        dealDamage(runtime, card, target, 0.35, true)
+        resolveDeaths(runtime)
+      }
+      break
+    }
+    case 'War Scythe': {
+      if (card.flags.warScytheEntryUsed) break
+      card.flags.warScytheEntryUsed = true
+      const targets = runtime.state.teams[enemyTeam].filter(alive).slice(0, 2)
+      card.flags.warScytheEntry = true
+      for (const target of targets) {
+        if (!alive(card) || !alive(target)) continue
+        target.flags.suppressOnDeath = true
+        dealDamage(runtime, card, target, 1, true)
+        if (target.hp > 0) target.flags.suppressOnDeath = false
+        const deck = runtime.state.teams[target.team]
+        const index = deck.indexOf(target)
+        if (target.hp <= 0 && index > 0) {
+          deck.splice(index, 1)
+          target.dead = true
+          target.hp = 0
+          runtime.state.fallen[target.team].push(target)
+        }
+        resolveDeaths(runtime)
+      }
+      card.flags.warScytheEntry = false
+      break
+    }
     case 'First Blood':
       performEntryAttack(runtime, card, 0.5)
       break
@@ -1232,7 +1309,16 @@ function onEntry(runtime: Runtime, card: CombatCard) {
         resolveDeaths(runtime)
         if (dealt > hpBefore && first.hp <= 0) {
           const next = active(runtime, enemyTeam)
-          if (next) next.hp -= Math.min(next.hp, dealt - hpBefore)
+          if (next) {
+            const overflowDamage = Math.min(next.hp, dealt - hpBefore)
+            // Preserve the live-game Triceratops quirk: lethal overkill into a
+            // Parallax behind the front card bypasses Paradox retaliation.
+            if (overflowDamage >= next.hp && hasAbility(runtime, next, 'Paradox') && !next.flags.paradox) {
+              next.flags.paradox = true
+              pushAbilityDebug(runtime, card, 'Horned Attack overkill bypassed Paradox on the card behind the defeated target.')
+            }
+            next.hp -= overflowDamage
+          }
           resolveDeaths(runtime)
         }
       }
@@ -1296,9 +1382,18 @@ function offensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
     'Dirty Claw','Heart Hunter','Chainsaw','Firepower','Rapid Blows','Behavioral Therapy',
     'Holy Wrath','Unlucky','Dragon Slayer','Frozen Wrath','Absolute Apex',
     'Dark Qi Manipulation','Chaos Destruction','ConstellarTaurus','ConstellarSagittarius','Whooping',
+    'Twelve Devas Axe','Staff of Perfect Enlightenment','Kitchen','War Scythe',
   ].includes(name)) special = true
 
   switch (name) {
+    case 'Twelve Devas Axe': damage *= 2.5; break
+    case 'Staff of Perfect Enlightenment':
+      damage *= 1.25
+      bypass = true
+      if (!statusProtected(runtime, target.team) && rand(runtime, attacker.team) < 0.25) target.status.stunned = Math.max(1, target.status.stunned)
+      break
+    case 'Kitchen': bypass = true; break
+    case 'War Scythe': if (attacker.flags.warScytheEntry) bypass = true; break
     case 'True Strike': if (rand(runtime, attacker.team) > 0.5) damage *= 2; break
     case 'Absolute Apex': damage *= 1.5; break
     case 'Whooping': if (cardAge(attacker.definition.name) > cardAge(target.definition.name)) damage *= 2; break
@@ -1351,6 +1446,7 @@ function offensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
     case 'Frozen Wrath': if (!statusProtected(runtime, target.team)) target.counters.frostbite = Math.max(target.counters.frostbite || 0, 2); break
     case 'Favorable Odds': damage *= Math.max(1, Math.ceil(rand(runtime, attacker.team) * 5)); break
     case 'Vainglory': if (attacker.hp / attacker.maxHp > 0.5) damage *= 1.5; break
+    case 'Frail': damage *= 1.5; break
     case 'Modesty': damage *= 0.7; break
     case 'Decapitate': damage *= 2; break
     case 'Martial Will': {
@@ -1464,6 +1560,20 @@ function defensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
       }
       break
     case 'Evasion': if (rand(runtime, target.team) > 0.9) damage = 0; break
+    case 'Divine Ascension': if (rand(runtime, target.team) > Math.pow(damage / target.maxHp, 2)) damage = 0; break
+    case 'Mastered Ascension':
+      target.counters.masteredAscension = ((target.counters.masteredAscension || 0) + 1) % 2
+      if (target.counters.masteredAscension === 1) damage = 0
+      break
+    case 'Vajra Short Sword':
+      if (rand(runtime, target.team) < 0.4) {
+        const reflected = Math.min(Math.max(0, attacker.hp * 0.75), Math.max(0, damage * 0.75))
+        damage = 0
+        attacker.hp -= reflected
+      }
+      break
+    case 'Shield of Ahimsa': damage *= 0.65; break
+    case 'Cosmic Rivalry': damage *= Math.max(0, 1 - Math.min(1, target.counters.cosmicRivalryDR || 0)); break
     case 'Finesse': if (damage < target.maxHp * 0.3) damage = 0; break
     case 'Last Stand':
       if (damage >= target.hp && !target.flags.lastStand) { damage = target.hp - 1; target.flags.lastStand = true }
@@ -1525,7 +1635,7 @@ function defensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
       break
     }
     case 'Big and Large': if (target.hp / target.maxHp > 0.25) damage *= 0.5; break
-    case 'Frail': damage *= 2; break
+    case 'Frail': damage *= 1.5; break
     case "Humanity's Spirit": if (target.hp / target.maxHp < 0.25) damage *= 0.5; break
     case 'Perforating Mist': damage *= 1.5; break
     case 'Reflective Shell': {
@@ -1597,7 +1707,7 @@ function defensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
 }
 
 function tryRevive(runtime: Runtime, attacker: CombatCard, target: CombatCard): boolean {
-  if (target.hp > 0) return false
+  if (target.hp > 0 || attacker.flags.warScytheEntry) return false
   if (activeBonusAbilities(target).length) {
     for (const gained of activeBonusAbilities(target)) {
       const revived = withAbility(target, gained, () => tryRevive(runtime, attacker, target))
@@ -1917,7 +2027,10 @@ function attackerRetroCore(runtime: Runtime, attacker: CombatCard, target: Comba
     case 'Decapitate': {
       const unholySurvives = hasAbility(runtime, target, 'Unholy Creature')
         && (!target.flags.unholyActive || (target.counters.unholyTurns || 0) > 0)
-      if (target.hp <= 0 && !unholySurvives) attacker.flags.extraTurn = true
+      if (target.hp <= 0 && !unholySurvives) {
+        boostStats(attacker, 1.2)
+        attacker.flags.extraTurn = true
+      }
       break
     }
     case 'Fury of the White Tiger': if (target.hp <= 0) { attacker.damage *= 1.35; attacker.hp = Math.min(attacker.maxHp, attacker.hp + attacker.maxHp * 0.35) }; break
@@ -1941,8 +2054,15 @@ function attackerRetro(runtime: Runtime, attacker: CombatCard, target: CombatCar
 function resolveAuraFarm(runtime: Runtime, target: CombatCard, incoming: number): { target: CombatCard; damage: number } {
   if (incoming < target.hp) return { target, damage: incoming }
   const deck = runtime.state.teams[target.team]
+  // Aura Farm only protects the active card directly ahead of Piccolo.
+  // Origin/Long Reach can hit Piccolo on the bench; Piccolo must never
+  // treat itself as the card it is protecting or overwrite the front slot.
+  if (deck[0] !== target) return { target, damage: incoming }
   const piccolo = deck[1]
-  if (!piccolo || piccolo.definition.name !== 'Piccolo' || piccolo.flags.farmed) return { target, damage: incoming }
+  if (!piccolo || piccolo === target || !alive(piccolo) || piccolo.definition.name !== 'Piccolo' || piccolo.flags.farmed) return { target, damage: incoming }
+  // Order of the Cosmos blocks Piccolo once Piccolo has actually appeared on-field.
+  // Live exception: an untouched bench Piccolo can still intercept with Aura Farm.
+  if ((runtime.state.boosts[piccolo.team].noAbilities || 0) > 0 && piccolo.flags.appearedOnField) return { target, damage: incoming }
   const protectedName = effectiveCardName(target) || target.definition.name
   const fatherhood = target.definition.name === 'Kid Gohan'
   piccolo.flags.farmed = true
@@ -1978,6 +2098,11 @@ function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: Comb
   const off = offensive(runtime, attacker, target, damage)
   damage = off.damage
   bypass = bypass || off.bypass
+
+  const executioner = runtime.state.boosts[attacker.team].executioner
+  if (executioner && target.maxHp > 0 && target.hp / target.maxHp < 0.3) {
+    damage *= 1 + executioner / 100
+  }
 
   if (attacker.status.blind && rand(runtime, attacker.team) > 0.4) { damage = 0; pushAbilityDebug(runtime, attacker, 'Blind caused the attack to miss.') }
 
@@ -2059,11 +2184,32 @@ function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: Comb
   target = farm.target
   damage = farm.damage
   const targetDeck = runtime.state.teams[target.team]
-  const longReachTarget = hasAbility(runtime, attacker, 'Long Reach') && targetDeck[0] === target ? targetDeck[1] : undefined
-  if (longReachTarget) pushAbilityDebug(runtime, attacker, 'Long Reach bypassed ' + (effectiveCardName(target) || target.definition.name) + ' and attacked ' + (effectiveCardName(longReachTarget) || longReachTarget.definition.name) + ' in the deck.')
+  let longReachTarget: CombatCard | undefined
+  if (hasAbility(runtime, attacker, 'Long Reach') && targetDeck[0] === target && targetDeck.length) {
+    const randomIndex = Math.min(targetDeck.length - 1, Math.floor(rand(runtime, attacker.team) * targetDeck.length))
+    longReachTarget = targetDeck[randomIndex]
+    pushAbilityDebug(runtime, attacker, 'Long Reach randomly targeted ' + (effectiveCardName(longReachTarget) || longReachTarget.definition.name) + ' from the living enemy deck.')
+  }
   const hpTarget = longReachTarget || target
+  if (hasAbility(runtime, attacker, 'Defraud')) {
+    // Live-game quirk: Defraud may reduce a target but can never finish it.
+    // Clamp after defensive modifiers too, so effects such as Frail cannot turn
+    // the 50%-of-current-HP hit into lethal damage. Robin Hood still pays the
+    // separate 25% Max HP self-cost after every attack.
+    damage = Math.min(damage, hpTarget.hp * 0.5)
+  }
   const appliedHpDamage = Math.min(hpTarget.hp, damage)
   hpTarget.hp -= appliedHpDamage
+
+  const mirrorKnight = runtime.state.boosts[hpTarget.team].mirrorKnight
+  if (appliedHpDamage > 0 && attacker !== hpTarget && mirrorKnight && alive(attacker)) {
+    const reflected = Math.min(attacker.hp, appliedHpDamage * mirrorKnight / 100)
+    if (reflected > 0) {
+      attacker.hp -= reflected
+      pushAbilityDebug(runtime, hpTarget, 'Mirror Knight aura reflected ' + compactDebugNumber(reflected) + ' damage back to ' + (effectiveCardName(attacker) || attacker.definition.name) + '.')
+    }
+  }
+
   if (appliedHpDamage > 0 && (hpTarget.counters.bindFatePair || 0) > 0) {
     const pair = hpTarget.counters.bindFatePair
     const partner = runtime.state.teams[hpTarget.team].find((candidate) =>
@@ -2170,6 +2316,16 @@ function applyOnDeathCore(runtime: Runtime, dead: CombatCard, opponent: CombatCa
 
   if (dead.flags.suppressOnDeath) return
 
+  // Order of the Cosmos suppresses the defeated card's death ability too.
+  // Nightmare Melody's counter decrement is cleanup for an already-created field,
+  // so keep that cleanup even while the ability itself is locked.
+  if ((runtime.state.boosts[team].noAbilities || 0) > 0) {
+    if (name === 'Nightmare Melody' && runtime.state.boosts[team].composerCount) {
+      runtime.state.boosts[team].composerCount = Math.max(0, (runtime.state.boosts[team].composerCount || 0) - 1)
+    }
+    return
+  }
+
   if (activeBonusAbilities(dead).length) {
     for (const gained of activeBonusAbilities(dead)) {
       withAbility(dead, gained, () => applyOnDeath(runtime, dead, opponent, true))
@@ -2266,6 +2422,28 @@ function resolveDeaths(runtime: Runtime) {
       const card = deck[0]
       if (!card || card.hp > 0) continue
 
+      const guardianAngel = runtime.state.boosts[team].guardianAngel
+      if (guardianAngel && !card.flags.guardianAngelUsed && runtime.rng.next() * 100 < guardianAngel) {
+        card.flags.guardianAngelUsed = true
+        card.hp = 1
+        pushAbilityDebug(runtime, card, 'Guardian Angel prevented lethal damage and left this ally at 1 HP. Its one save for this ally is now used.')
+        changed = true
+        continue
+      }
+
+      if (hasAbility(runtime, card, 'Divine Ascension') && !card.flags.awakened) {
+        card.flags.awakened = true
+        card.abilityOverride = 'Mastered Ascension'
+        card.maxHp *= 1.5
+        card.damage *= 1.5
+        card.hp = card.maxHp
+        card.counters.normalDamage = (card.counters.normalDamage || card.damage / 1.5) * 1.5
+        card.counters.normalMaxHp = (card.counters.normalMaxHp || card.maxHp / 1.5) * 1.5
+        pushAbilityDebug(runtime, card, 'Divine Ascension awakened — became Mastered Ascension at 1.5× stats and full HP.')
+        changed = true
+        continue
+      }
+
       if (hasAbility(runtime, card, 'Undying')) {
         if (!card.flags.undyingActive) {
           card.flags.undyingActive = true
@@ -2317,6 +2495,18 @@ function resolveDeaths(runtime: Runtime) {
       card.hp = 0
       card.dead = true
       runtime.state.fallen[team].push(card)
+
+      const finalTestament = runtime.state.boosts[team].finalTestament
+      const inheritor = deck[0]
+      if (inheritor && finalTestament) {
+        const inheritedDamage = card.damage * finalTestament / 100
+        const inheritedHp = card.maxHp * finalTestament / 100
+        inheritor.damage += inheritedDamage
+        inheritor.maxHp += inheritedHp
+        inheritor.hp += inheritedHp
+        pushAbilityDebug(runtime, card, 'Final Testament passed ' + finalTestament + '% of its ATK and Max HP to ' + (effectiveCardName(inheritor) || inheritor.definition.name) + '.')
+      }
+
       if (runtime.captureDebug) pushDebugEvent(runtime, {
         turn: runtime.state.turn,
         type: 'death',
@@ -2488,6 +2678,21 @@ function statusEnd(runtime: Runtime, attacker: CombatCard) {
 
 function prepareTurn(runtime: Runtime, attacker: CombatCard) {
   const composer = runtime.state.boosts[attacker.team]
+
+  if (hasAbility(runtime, attacker, 'Cosmic Rivalry')) {
+    runAbilityTrace(runtime, attacker, 'Cosmic Rivalry', () => {
+      const baseDamage = attacker.counters.normalDamage || attacker.damage
+      const baseMaxHp = attacker.counters.normalMaxHp || attacker.maxHp
+      attacker.damage += baseDamage * 0.1
+      attacker.maxHp += baseMaxHp * 0.1
+      attacker.hp += baseMaxHp * 0.1
+      attacker.counters.cosmicRivalryDR = Math.min(1, (attacker.counters.cosmicRivalryDR || 0) + 0.1)
+    })
+  }
+  if (hasAbility(runtime, attacker, 'Shield of Ahimsa')) {
+    attacker.counters.ahimsaTurns = (attacker.counters.ahimsaTurns || 0) + 1
+    if (attacker.counters.ahimsaTurns % 2 === 0) attacker.status.shield += 1
+  }
   if ((composer.composerCount || 0) > 0) {
     composer.composerThreshold = Math.max(0.6, (composer.composerThreshold ?? 1) - 0.1)
     const target = active(runtime, OTHER_TEAM[attacker.team])
@@ -2858,6 +3063,17 @@ function doTurn(runtime: Runtime, attacker: CombatCard) {
         dealDamage(runtime, attacker, target, 0.5, true)
       }
       resolveDeaths(runtime)
+
+      const stormSpirit = runtime.state.boosts[attacker.team].stormSpirit
+      const stormTarget = active(runtime, enemyTeam)
+      // Live behavior: Overcharge does not roll onto the next enemy when the
+      // primary attack killed the card it originally struck.
+      if (stormSpirit && stormTarget && alive(attacker) && alive(target) && runtime.rng.next() * 100 < stormSpirit) {
+        pushAbilityDebug(runtime, attacker, 'Storm Spirit triggered — immediately attacking again at 50% damage.')
+        const stormDamage = dealDamage(runtime, attacker, stormTarget, 0.5)
+        applyCollateralAfterHit(runtime, attacker, stormTarget, stormDamage)
+        resolveDeaths(runtime)
+      }
     }
   }
 
@@ -2954,9 +3170,17 @@ function growHiddenInDepths(runtime: Runtime, moving: BattleTeam) {
     const card = deck[index]
     if (hasAbility(runtime, card, 'Hidden in the Depths')) {
       runAbilityTrace(runtime, card, 'Hidden in the Depths', () => {
-        card.damage *= 1.1
-        card.maxHp *= 1.1
-        card.hp *= 1.1
+        const baseDamage = card.counters.normalDamage || card.damage
+        const baseMaxHp = card.counters.normalMaxHp || card.maxHp
+        const damageBonus = card.counters.hiddenDepthsBonusDamage || 0
+        const hpBonus = card.counters.hiddenDepthsBonusHp || 0
+        const addDamage = Math.min(baseDamage * 0.1, Math.max(0, baseDamage * 2 - damageBonus))
+        const addHp = Math.min(baseMaxHp * 0.1, Math.max(0, baseMaxHp * 2 - hpBonus))
+        card.damage += addDamage
+        card.maxHp += addHp
+        card.hp += addHp
+        card.counters.hiddenDepthsBonusDamage = damageBonus + addDamage
+        card.counters.hiddenDepthsBonusHp = hpBonus + addHp
       })
     }
   }

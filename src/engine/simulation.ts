@@ -50,10 +50,14 @@ export interface DepthsSimulationOptions {
   throwOnBattleTurnCap?: boolean
   /** Optional player-unlocked Depth bans. Default game exclusions remain active separately. */
   bannedCardNames?: string[]
+  /** Temporarily restore the eight pre-update default Depth bans. Does not consume player ban slots. */
+  rebanLegacyDepths?: boolean
 }
 
 export interface DepthsBatchOptions extends DepthsSimulationOptions {
   runs?: number
+  battleSpeedStructureLevel?: number
+  chronoShard?: boolean
 }
 
 export type DepthsProgressCallback = (floor: number, battleTurn?: number, enemyNames?: string[]) => void
@@ -74,7 +78,7 @@ export function simulateDepthsRun(
   onProgress?: DepthsProgressCallback,
 ): DepthsRunResult {
   const startFloor = Math.max(1, Math.floor(options.startFloor ?? 1))
-  const floorCap = Math.max(startFloor, Math.floor(options.floorCap ?? 50_000))
+  const floorCap = Math.max(startFloor, Math.floor(options.floorCap ?? 100_000))
   const runSeed = options.seed ?? 1
   const unsupported = new Set<string>()
   let totalTurns = 0
@@ -82,7 +86,7 @@ export function simulateDepthsRun(
 
   for (let floor = startFloor; floor <= floorCap; floor++) {
     const floorSeed = mixSeed(runSeed, floor)
-    const enemies = generateDepthsTeam(floor, floorSeed, options.bannedCardNames)
+    const enemies = generateDepthsTeam(floor, floorSeed, options.bannedCardNames, options.rebanLegacyDepths)
     const enemyNames = enemies.map((enemy) => enemy.card.name)
     onProgress?.(floor, undefined, enemyNames)
     const hasTurnCap = Number.isFinite(options.battleTurnCap)
@@ -161,6 +165,7 @@ export function simulateDepthsBatch(
       seed: runSeed,
       battleTurnCap: options.battleTurnCap,
       bannedCardNames: options.bannedCardNames,
+      rebanLegacyDepths: options.rebanLegacyDepths,
     })
     results.push(result)
     for (const ability of result.unsupportedAbilities) unsupported.add(ability)
@@ -175,9 +180,9 @@ export function simulateDepthsBatch(
   const totalBattles = results.reduce((sum, result) => sum + result.battles, 0)
   const allTurns = results.reduce((sum, result) => sum + result.totalTurns, 0)
   const averageTurnsPerBattle = totalBattles > 0 ? allTurns / totalBattles : 0
-  const estimatedSecondsLow = estimateDepthClearSeconds(estimate.low, averageTurnsPerBattle, true)
-  const estimatedSecondsMedian = estimateDepthClearSeconds(estimate.medianDepth, averageTurnsPerBattle, true)
-  const estimatedSecondsHigh = estimateDepthClearSeconds(estimate.high, averageTurnsPerBattle, true)
+  const estimatedSecondsLow = estimateDepthClearSeconds(estimate.low, averageTurnsPerBattle, options.chronoShard ?? true, options.battleSpeedStructureLevel)
+  const estimatedSecondsMedian = estimateDepthClearSeconds(estimate.medianDepth, averageTurnsPerBattle, options.chronoShard ?? true, options.battleSpeedStructureLevel)
+  const estimatedSecondsHigh = estimateDepthClearSeconds(estimate.high, averageTurnsPerBattle, options.chronoShard ?? true, options.battleSpeedStructureLevel)
   const auraCardsPerHour = estimatedSecondsMedian > 0 ? estimate.auraPackMedian / (estimatedSecondsMedian / 3600) : 0
 
   return {

@@ -25,7 +25,7 @@ const enemies = generateDepthsTeam(floor, floorSeed)
 const enemyNames = enemies.map((enemy) => enemy.card.name)
 
 assert(
-  JSON.stringify(enemyNames) === JSON.stringify(['Anubis', 'Darling', 'Anubis', 'ToadBoiGaming']),
+  JSON.stringify(enemyNames) === JSON.stringify(['Anubis', 'Darling', 'Anubis', 'Titan']),
   `Stall regression floor changed: ${enemyNames.join(' | ')}`,
 )
 

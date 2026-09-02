@@ -28,7 +28,7 @@ const runSeed = 1241481851
 const floorSeed = mixSeed(runSeed, floor)
 const enemies = generateDepthsTeam(floor, floorSeed)
 const names = enemies.map((enemy) => enemy.card.name)
-assert(names.join('|') === 'Dancer|Wendigo|Sorcerer|Michael', 'Reported enemy lineup changed: ' + names.join(' | '))
+assert(names.join('|') === 'Demon Hunter|Yamato no Orochi|Stegosaurus|Mummy', 'Reported enemy lineup changed: ' + names.join(' | '))
 const loadout: TeamLoadout = { cards: [
   { cardName: 'Zombie Dragon', borders: ['Platinum', 'Crystal'] },
   { cardName: 'Hades', borders: ['Crystal', 'Galaxy'] },

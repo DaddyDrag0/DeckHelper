@@ -17,7 +17,9 @@ export const RNG_ABILITIES = new Set([
   'Eternity', 'Frozen Ashes', 'Dagger', 'Guerilla Warfare', 'Fusion... HA!', 'Armageddon',
   'Favorable Odds', "Reaper's Luck", 'Invisibility', 'Chaos Destruction',
   'Creation and Restoration', 'Herbal Alchemy', 'Gambler', 'Untouchable', 'Divine Mist',
-  'Origin', "Pandora's Box", 'Naughty or Nice?', 'Snowscape',
+  'Origin', "Pandora's Box", 'Naughty or Nice?', 'Snowscape', 'Divine Ascension',
+  'Six Realms Staff', 'Kitchen', 'Vajra Short Sword', 'Staff of Perfect Enlightenment',
+  'Great Nirvana Sword - Zero',
 ])
 
 function boostedCards(auraName: string) {

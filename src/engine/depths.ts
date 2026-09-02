@@ -3,9 +3,11 @@ import type { CardDefinition, DepthsEnemy } from '../types'
 import { getAttack, getHealth } from './stats'
 import { SeededRng } from './rng'
 
-const HARD_EXCLUSIONS = new Set(['Vampire Lord'])
+const HARD_EXCLUSIONS = new Set(['Vampire Lord', 'Parallax', 'Samurai'])
+export const LEGACY_DEPTHS_BANS = ['Samurai', 'Seraphim', 'Loki', 'Fuxi', 'Parallax', 'Nán Fāng Zhū Què', 'Brachiosaurus', 'Jersey Devil'] as const
+const LEGACY_DEPTHS_BAN_SET = new Set<string>(LEGACY_DEPTHS_BANS)
 
-export const MAX_DEPTH_BANS = 12
+export const MAX_DEPTH_BANS = 14
 
 function normalizeDepthBans(names: readonly string[] | undefined): string[] {
   if (!names?.length) return []
@@ -99,19 +101,22 @@ function unlockTier(floor: number): number {
   return low - 1
 }
 
-function preparedPool(floor: number, bannedCardNames: readonly string[] = []): PreparedPool {
+function preparedPool(floor: number, bannedCardNames: readonly string[] = [], rebanLegacyDepths = false): PreparedPool {
   const tier = unlockTier(floor)
   if (tier < 0) return { entries: [], cumulative: [], totalWeight: 0 }
 
   const bans = normalizeDepthBans(bannedCardNames)
-  const cacheKey = bans.length ? `${tier}|${bans.join('\u0000')}` : ''
-  const cached = bans.length ? CUSTOM_BAN_POOL_CACHE.get(cacheKey) : POOL_CACHE.get(tier)
+  const cacheKey = bans.length || rebanLegacyDepths
+    ? `${tier}|${rebanLegacyDepths ? 'legacy|' : ''}${bans.join('\u0000')}`
+    : ''
+  const cached = cacheKey ? CUSTOM_BAN_POOL_CACHE.get(cacheKey) : POOL_CACHE.get(tier)
   if (cached) return cached
 
   const maxUnlockFloor = UNLOCK_FLOORS[tier]
   const banned = bans.length ? new Set(bans) : null
+  const legacyBanned = rebanLegacyDepths ? LEGACY_DEPTHS_BAN_SET : null
   const entries = PREPARED
-    .filter((entry) => entry.unlockFloor <= maxUnlockFloor && !banned?.has(entry.card.name))
+    .filter((entry) => entry.unlockFloor <= maxUnlockFloor && !banned?.has(entry.card.name) && !legacyBanned?.has(entry.card.name))
     .sort((a, b) => a.originalIndex - b.originalIndex)
 
   const cumulative: number[] = []
@@ -122,7 +127,7 @@ function preparedPool(floor: number, bannedCardNames: readonly string[] = []): P
   }
 
   const pool = { entries, cumulative, totalWeight }
-  if (bans.length) CUSTOM_BAN_POOL_CACHE.set(cacheKey, pool)
+  if (cacheKey) CUSTOM_BAN_POOL_CACHE.set(cacheKey, pool)
   else POOL_CACHE.set(tier, pool)
   return pool
 }
@@ -132,8 +137,8 @@ export function isUnlockedAtFloor(card: CardDefinition, floor: number): boolean 
   return getAttack(card) * getHealth(card) < depthBudget(floor)
 }
 
-export function getDepthsPool(floor: number, bannedCardNames: readonly string[] = []) {
-  const pool = preparedPool(floor, bannedCardNames)
+export function getDepthsPool(floor: number, bannedCardNames: readonly string[] = [], rebanLegacyDepths = false) {
+  const pool = preparedPool(floor, bannedCardNames, rebanLegacyDepths)
   return pool.entries.map(({ card, weight }) => ({ card, weight }))
 }
 
@@ -148,8 +153,8 @@ function pickWeighted(pool: PreparedPool, roll: number): CardDefinition {
   return pool.entries[low].card
 }
 
-export function generateDepthsTeam(floor: number, seed = floor, bannedCardNames: readonly string[] = []): DepthsEnemy[] {
-  const pool = preparedPool(floor, bannedCardNames)
+export function generateDepthsTeam(floor: number, seed = floor, bannedCardNames: readonly string[] = [], rebanLegacyDepths = false): DepthsEnemy[] {
+  const pool = preparedPool(floor, bannedCardNames, rebanLegacyDepths)
   const rng = new SeededRng(seed)
   const power = depthsPower(floor)
   const result: DepthsEnemy[] = []
@@ -175,5 +180,6 @@ export const depthsMechanics = {
   duplicateEnemiesAllowed: true,
   weatherWeights: WEATHER_WEIGHTS,
   hardExclusions: [...HARD_EXCLUSIONS],
+  legacyHardExclusions: [...LEGACY_DEPTHS_BANS],
   maxPlayerBans: MAX_DEPTH_BANS,
 }
