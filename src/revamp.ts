@@ -55,7 +55,7 @@ export class DeckHelperRevamp {
   private error = ''
 
   constructor(private root: HTMLElement) {
-    this.tab = this.state.inventory.cards.length ? 'optimize' : 'inventory'
+    this.tab = 'inventory'
     this.root.addEventListener('click', (event) => this.onClick(event))
     this.root.addEventListener('input', (event) => this.onInput(event))
     this.root.addEventListener('change', (event) => this.onChange(event))
@@ -126,8 +126,8 @@ export class DeckHelperRevamp {
           </div>
         </header>
         <nav class="rv-nav">
-          ${this.navButton('optimize', 'Optimize', 'Find your best deck')}
-          ${this.navButton('inventory', 'Inventory', 'Add & manage cards')}
+          ${this.navButton('inventory', 'Inventory', 'Step 1 · Add & manage cards')}
+          ${this.navButton('optimize', 'Optimize', 'Step 2 · Find your best deck')}
           ${this.navButton('saved', 'Saved', 'Your saved decks')}
         </nav>
         ${this.error ? `<div class="rv-error"><span>${escapeHtml(this.error)}</span><button data-action="clear-error">×</button></div>` : ''}
