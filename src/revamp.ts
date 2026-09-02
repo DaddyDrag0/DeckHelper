@@ -214,10 +214,10 @@ export class DeckHelperRevamp {
           const active = value === -1 ? card.lockedPosition === null : card.lockedPosition === value
           return `<button class="${active ? 'active' : ''}" data-action="card-position" data-key="${key}" data-position="${value}">${label}</button>`
         }).join('')}</div>` : ''}
+        <button class="rv-remove-card" data-action="remove-card" data-key="${key}">Remove</button>
       </div>
       <details class="rv-advanced-row"><summary>Advanced</summary><div>
         <span>Borders</span><div class="rv-border-row">${CARD_BORDERS.map((border) => `<button class="rv-border ${card.borders.includes(border) ? 'active' : ''}" data-action="owned-border" data-key="${key}" data-border="${border}">${border[0]}</button>`).join('')}</div>
-        <button class="rv-danger-link" data-action="remove-card" data-key="${key}">Remove card</button>
       </div></details>
     </article>`
   }
@@ -327,10 +327,11 @@ export class DeckHelperRevamp {
   }
 
   private renderResult(result: RankedTeam, index: number) {
+    const powerEstimate = result.quickEstimate ?? result.metrics.medianDepth
     return `<article class="rv-result-card ${index === 0 ? 'winner' : ''}">
       <div class="rv-result-rank"><b>#${index + 1}</b>${index === 0 ? '<span>Best match</span>' : ''}</div>
       <div class="rv-result-team">${result.loadout.cards.map((card, slot) => `<div class="rv-result-slot">${this.renderArt(card.cardName, card.borders, true)}<div><span>Slot ${slot + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small></div></div>`).join('')}</div>
-      <div class="rv-result-meta"><span>Stat Aura <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability Aura <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span>${this.searchMode === 'full' ? `<span>Median Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span><span>Average <b>${formatNumber(result.metrics.averageDepth, 1)}</b></span>` : `<span>Power estimate <b>${formatNumber(result.metrics.medianDepth)}</b></span>`}</div>
+      <div class="rv-result-meta"><span>Stat Aura <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability Aura <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span><span>Power estimate <b>~${formatNumber(powerEstimate)}</b></span>${this.searchMode === 'full' ? `<span>Median Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span><span>Average <b>${formatNumber(result.metrics.averageDepth, 1)}</b></span>` : `<span>Estimated Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span>`}</div>
       ${result.metrics.trusted ? '' : `<div class="rv-warning">Some mechanics are not fully verified: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
       <div class="rv-result-actions"><button class="rv-primary" data-action="copy-result" data-id="${escapeHtml(result.id)}">Copy Depths Code</button><button data-action="use-result" data-id="${escapeHtml(result.id)}">Use Deck</button><button data-action="save-result" data-id="${escapeHtml(result.id)}">Save</button></div>
     </article>`
@@ -438,6 +439,10 @@ export class DeckHelperRevamp {
   private changeQuantity(encodedKey: string, delta: number) {
     const card = this.findOwned(encodedKey)
     if (!card) return
+    if (delta < 0 && card.quantity <= 1) {
+      this.removeCard(encodedKey)
+      return
+    }
     card.quantity = Math.max(1, Math.min(999, card.quantity + delta))
     this.persist(); this.render()
   }
