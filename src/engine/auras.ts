@@ -19,11 +19,17 @@ const AURA_TIERS: Record<AuraBorderName, number> = {
   Galaxy: 3,
 }
 
-const CUSTOM_SKILL_VALUES: Record<string, readonly [number, number, number, number]> = {
+const CUSTOM_SKILL_VALUES: Record<string, readonly number[]> = {
   Berserker: [5, 10, 15, 20],
   'Flame Wizard': [15, 25, 35, 50],
   Shielder: [2, 5, 7, 10],
   'Synth Human': [8, 10, 12, 15],
+  'Storm Spirit': [10, 15, 20, 30],
+  'Guardian Angel': [10, 15, 20, 30],
+  Executioner: [15, 25, 35, 50],
+  'Mirror Knight': [10, 15, 20, 30],
+  // The NEW source contains a fifth 15% entry, but Aura cards only use Base/Platinum/Crystal/Galaxy.
+  'Final Testament': [5, 7.5, 10, 12.5, 15],
 }
 
 const BOOSTED_PACKS: Record<string, string> = {
@@ -31,11 +37,12 @@ const BOOSTED_PACKS: Record<string, string> = {
   Shrinemaiden: 'Rising Sun',
   Shatbi: 'Egypt',
   Taoist: 'Immortal',
-  Myhts: 'Cryptid',
+  Myths: 'Cryptid',
   'Dinosaur King': 'Prehistoric',
 }
 
 const BOOSTED_WEATHERS: Record<string, string> = {
+  Mangeka: 'Manga',
   Elohim: 'Rapture',
   Yggdrasil: 'Armageddon',
   Satan: 'Blood Rain',
@@ -48,6 +55,7 @@ const BOOSTED_WEATHERS: Record<string, string> = {
   Astrologist: 'Meteor Shower',
   Disease: 'Virus',
 }
+
 
 export const TOY_CARD_NAMES = new Set([
   'Toy Bear',
@@ -76,7 +84,7 @@ export function getStatAuraValue(aura: AuraDefinition, border?: AuraBorderName |
 export function getSkillAuraValue(aura: AuraDefinition, border?: AuraBorderName | null): number {
   const tier = getAuraTier(border)
   const custom = CUSTOM_SKILL_VALUES[aura.name]
-  if (custom) return custom[tier]
+  if (custom) return custom[tier] ?? custom[0] ?? 0
   return Number(aura.base || 0) + Number(aura.perLevel || 0) * tier
 }
 
@@ -102,6 +110,9 @@ export function statAuraPercentForCard(
 ): number {
   const base = getStatAuraValue(aura, border)
   if (aura.name === 'General Sun Tzu') return base
+  if (aura.name === 'The One Ring') {
+    return !card.definition.weather && !card.definition.boss ? base : 0
+  }
   return isStatAuraBoosted(aura, card) ? base * Number(aura.boostMult || 1) : base
 }
 
@@ -181,6 +192,11 @@ const DIRECT_SKILL_BOOST_KEYS: Record<string, keyof BattleBoosts> = {
   'Synth Human': 'synthHuman',
   'End Times': 'endTimes',
   'Vampire Matron': 'vampireMatron',
+  'Storm Spirit': 'stormSpirit',
+  'Guardian Angel': 'guardianAngel',
+  Executioner: 'executioner',
+  'Mirror Knight': 'mirrorKnight',
+  'Final Testament': 'finalTestament',
 }
 
 export function buildSkillAuraBoosts(selection?: AuraSelection | null): {

@@ -60,6 +60,7 @@ export const CARD_AGES: Record<string, number> = {
   Lucifer: 2024,
   Savior: 2024,
   Parallax: 16,
+  'Nao Presence': 4,
   "Hell's Army": -5000,
   "Heaven's Armor": -5000,
   'Judgment Day': -5000,

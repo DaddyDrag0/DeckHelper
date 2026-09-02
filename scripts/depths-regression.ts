@@ -45,12 +45,13 @@ function loadout(names: string[]): TeamLoadout {
   return { cards: names.map((cardName) => ({ cardName, borders: [] })) }
 }
 
+
 // Player-unlocked Depth bans remove only additional cards from the generated pool.
-// They are optional (0..12), while the game's built-in hard exclusions always stay excluded.
+// They are optional (0..14), while the game's built-in hard exclusions always stay excluded.
 {
   const floor = 50_000
   const eligibleNames = getDepthsPool(floor).map((entry) => entry.card.name)
-  assert(eligibleNames.length > 12, 'Expected enough Depth-eligible cards for ban regression')
+  assert(eligibleNames.length > MAX_DEPTH_BANS, 'Expected enough Depth-eligible cards for ban regression')
   const twoBans = eligibleNames.slice(0, 2)
   const twoBanPool = getDepthsPool(floor, twoBans).map((entry) => entry.card.name)
   for (const name of twoBans) assert(!twoBanPool.includes(name), `Player Depth ban did not remove ${name}`)
@@ -61,7 +62,7 @@ function loadout(names: string[]): TeamLoadout {
   for (const name of overCapBans.slice(0, MAX_DEPTH_BANS)) {
     assert(!cappedPool.includes(name), `Expected capped player ban to remove ${name}`)
   }
-  assert(cappedPool.includes(overCapBans[MAX_DEPTH_BANS]), 'Player Depth bans must cap at 12')
+  assert(cappedPool.includes(overCapBans[MAX_DEPTH_BANS]), 'Player Depth bans must cap at 14')
 
   for (const name of depthsMechanics.hardExclusions) {
     assert(!getDepthsPool(floor, []).some((entry) => entry.card.name === name), `Default Depth ban ${name} must remain excluded`)
@@ -183,15 +184,38 @@ assert(astraeusCardA.abilityOverride === astraeusCardB.abilityOverride, 'Constel
   const damage = getAttack(longReach, [])
   const hp = getHealth(longReach, [])
   const activeHealth = damage * 100 + 100
-  const result = simulateBattleV2(
-    loadout([longReach.name]),
-    [namedDummy('__Long Reach Active__', activeHealth, hp * 10), namedDummy('__Long Reach Bench__', Math.max(1, damage * 0.5), 0)],
-    1104,
-  )
-  const activeTarget = result.state.teams.Enemies.find((card) => card.definition.name === '__Long Reach Active__')
-  const fallenBench = result.state.fallen.Enemies.find((card) => card.definition.name === '__Long Reach Bench__')
-  assert(activeTarget && fallenBench, 'Long Reach did not remove slot 2 while leaving slot 1 active')
-  assert(activeTarget.hp === activeHealth, 'Long Reach damaged the active target HP')
+  const benchHealth = damage * 100 + 200
+  let hitActive = false
+  let hitBench = false
+  for (let seed = 1; seed <= 80 && !(hitActive && hitBench); seed++) {
+    const result = simulateBattleV2(
+      loadout([longReach.name]),
+      [namedDummy('__Long Reach Active__', activeHealth, hp * 10), namedDummy('__Long Reach Bench__', benchHealth, 0)],
+      seed,
+      1,
+      true,
+      false,
+    )
+    const active = findBattleCard(result, '__Long Reach Active__')
+    const bench = findBattleCard(result, '__Long Reach Bench__')
+    if (active && active.hp < activeHealth) hitActive = true
+    if (bench && bench.hp < benchHealth) hitBench = true
+  }
+  assert(hitActive && hitBench, 'Long Reach should randomly target different living cards across deterministic seeds')
+}
+
+{
+  const cherub = cardByName('Cherub')
+  const damage = getAttack(cherub, [])
+  const hp = getHealth(cherub, [])
+  const enemyHealth = damage * 100
+  const enemyAttack = hp * 0.1
+  const result = simulateBattleV2(loadout([cherub.name]), [namedDummy('__Frail Target__', enemyHealth, enemyAttack)], 7711, 2, true, false)
+  const enemy = findBattleCard(result, '__Frail Target__')
+  const holder = findBattleCard(result, cherub.name)
+  assert(enemy && holder, 'Cherub Frail regression lost a prepared card')
+  assert(Math.abs((enemyHealth - enemy.hp) - Math.ceil(damage * 1.5)) <= 1e-6, 'Cherub should deal 1.5x damage')
+  assert(Math.abs((hp - holder.hp) - Math.ceil(enemyAttack * 1.5)) <= 1e-6, 'Cherub should take 1.5x damage')
 }
 
 {
@@ -310,15 +334,9 @@ const strongest = cards
 
 assert(strongest.length === 4, 'Could not build a four-card regression team')
 const fixedDepthsExclusions = [
-  'Samurai',
-  'Seraphim',
   'Vampire Lord',
-  'Loki',
-  'Fuxi',
   'Parallax',
-  'Nán Fāng Zhū Què',
-  'Brachiosaurus',
-  'Jersey Devil',
+  'Samurai',
 ]
 for (const name of fixedDepthsExclusions) {
   const card = cardByName(name)

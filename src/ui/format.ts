@@ -4,8 +4,8 @@ import type { AuraSelection, TeamLoadout } from '../types'
 const thumbnailMap = thumbnails as Record<string, string>
 
 export function thumbnail(assetId: number | null | undefined): string {
-  if (!assetId || !thumbnailMap[String(assetId)]) return ''
-  return `./public/card-images/${assetId}.webp`
+  if (!assetId) return ''
+  return thumbnailMap[String(assetId)] || ''
 }
 
 export function escapeHtml(value: unknown): string {

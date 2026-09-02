@@ -94,6 +94,11 @@ export interface BattleBoosts {
   synthHuman?: number
   endTimes?: number
   vampireMatron?: number
+  stormSpirit?: number
+  guardianAngel?: number
+  executioner?: number
+  mirrorKnight?: number
+  finalTestament?: number
   fossils?: number
   composerCount?: number
   composerThreshold?: number

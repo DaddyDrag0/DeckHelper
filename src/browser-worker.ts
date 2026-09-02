@@ -2,7 +2,7 @@
 
 import { simulateDepthsRun, type DepthsRunResult } from './engine/simulation'
 import { SeededRng } from './engine/rng'
-import { auraPackRangeForMedian } from './engine/depths-rewards'
+import { auraPackRangeForMedian, potionDropRangeForMedian } from './engine/depths-rewards'
 import { estimateDepthClearSeconds } from './engine/depths-time'
 import type { TeamLoadout } from './types'
 
@@ -14,6 +14,10 @@ interface BatchRequest {
   floorCap: number
   seed: number
   bannedCardNames?: string[]
+  rebanLegacyDepths?: boolean
+  bountifulDepths?: boolean
+  battleSpeedStructureLevel?: number
+  chronoShard?: boolean
 }
 
 interface SingleRunRequest {
@@ -24,6 +28,7 @@ interface SingleRunRequest {
   batchSeed: number
   runIndex: number
   bannedCardNames?: string[]
+  rebanLegacyDepths?: boolean
 }
 
 type SimulationRequest = BatchRequest | SingleRunRequest
@@ -40,7 +45,7 @@ function runSeed(batchSeed: number, runIndex: number): number {
   return seed
 }
 
-function summarize(results: DepthsRunResult[]) {
+function summarize(results: DepthsRunResult[], bountifulDepths = false, battleSpeedStructureLevel = 0, chronoShard = true) {
   const unsupported = new Set<string>()
   for (const result of results) {
     for (const ability of result.unsupportedAbilities) unsupported.add(ability)
@@ -49,12 +54,13 @@ function summarize(results: DepthsRunResult[]) {
   const middle = Math.floor(floors.length / 2)
   const medianFloor = floors.length % 2 ? floors[middle] : (floors[middle - 1] + floors[middle]) / 2
   const estimate = auraPackRangeForMedian(medianFloor)
+  const potionRewards = potionDropRangeForMedian(medianFloor, 0.15, bountifulDepths)
   const totalBattles = results.reduce((sum, result) => sum + result.battles, 0)
   const totalTurns = results.reduce((sum, result) => sum + result.totalTurns, 0)
   const averageTurnsPerBattle = totalBattles > 0 ? totalTurns / totalBattles : 0
-  const estimatedSecondsLow = estimateDepthClearSeconds(estimate.low, averageTurnsPerBattle, true)
-  const estimatedSecondsMedian = estimateDepthClearSeconds(estimate.medianDepth, averageTurnsPerBattle, true)
-  const estimatedSecondsHigh = estimateDepthClearSeconds(estimate.high, averageTurnsPerBattle, true)
+  const estimatedSecondsLow = estimateDepthClearSeconds(estimate.low, averageTurnsPerBattle, chronoShard, battleSpeedStructureLevel)
+  const estimatedSecondsMedian = estimateDepthClearSeconds(estimate.medianDepth, averageTurnsPerBattle, chronoShard, battleSpeedStructureLevel)
+  const estimatedSecondsHigh = estimateDepthClearSeconds(estimate.high, averageTurnsPerBattle, chronoShard, battleSpeedStructureLevel)
   const auraCardsPerHour = estimatedSecondsMedian > 0 ? estimate.auraPackMedian / (estimatedSecondsMedian / 3600) : 0
   return {
     runs: results,
@@ -72,6 +78,7 @@ function summarize(results: DepthsRunResult[]) {
     estimatedSecondsMedian,
     estimatedSecondsHigh,
     auraCardsPerHour,
+    potionRewards,
     trusted: unsupported.size === 0,
     unsupportedAbilities: [...unsupported].sort(),
   }
@@ -84,6 +91,7 @@ function simulateOne(request: SingleRunRequest, onProgress?: (floor: number, bat
     battleTurnCap: LIVE_BATTLE_TURN_CAP,
     throwOnBattleTurnCap: false,
     bannedCardNames: request.bannedCardNames,
+    rebanLegacyDepths: request.rebanLegacyDepths,
   }, onProgress)
 }
 
@@ -219,6 +227,7 @@ async function simulateParallel(request: BatchRequest): Promise<DepthsRunResult[
         batchSeed: request.seed,
         runIndex,
         bannedCardNames: request.bannedCardNames,
+        rebanLegacyDepths: request.rebanLegacyDepths,
       } satisfies SingleRunRequest)
     }
 
@@ -253,7 +262,7 @@ self.onmessage = async (event: MessageEvent<SimulationRequest>) => {
       return
     }
     const results = await simulateParallel(request)
-    self.postMessage({ id: request.id, ok: true, elapsedMs: performance.now() - started, result: summarize(results) })
+    self.postMessage({ id: request.id, ok: true, elapsedMs: performance.now() - started, result: summarize(results, request.bountifulDepths, request.battleSpeedStructureLevel, request.chronoShard !== false) })
   } catch (error) {
     self.postMessage({
       id: request.id,
