@@ -118,7 +118,6 @@ export class DeckHelperRevamp {
       <div class="rv-shell">
         <header class="rv-header">
           <div class="rv-brand">
-            <div class="rv-logo">DH</div>
             <div><strong>DeckHelper</strong><span>Card RNG Expansion</span></div>
           </div>
           <div class="rv-header-stats">
@@ -413,6 +412,10 @@ export class DeckHelperRevamp {
     const position = input?.selectionStart ?? input?.value.length ?? 0
     this.render()
     const next = document.getElementById(id) as HTMLInputElement | null
+    if (id === 'ban-search') {
+      const details = next?.closest('details') as HTMLDetailsElement | null
+      if (details) details.open = true
+    }
     if (next) { next.focus(); next.setSelectionRange(position, position) }
   }
 
