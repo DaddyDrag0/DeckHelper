@@ -66,8 +66,8 @@ assert.equal(statAuraPercentForCard(disease, auraProbe('Virus Test', 'Virus'), g
 assert.equal(statAuraPercentForCard(elohim, auraProbe('Rapture Test', 'Rapture'), galaxy), 300, 'Elohim Rapture boost cap')
 assert.equal(
   statAuraPercentForCard(satan, auraProbe('Blood Rain Test', 'Blood Rain'), galaxy),
-  282.5,
-  'Weather-group cap must not alter weather auras already below 300%.',
+  226,
+  'Satan Galaxy must match the in-game +113% base and +226% Blood Rain boost.',
 )
 
 const typhonDef = card('Typhon')
