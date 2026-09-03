@@ -22,6 +22,8 @@ import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
+const MAX_SELECTED_CARDS = 15
+const MAX_STAT_AURAS = 4
 type Tab = 'optimize' | 'inventory' | 'saved'
 
 type AuraKind = 'stat' | 'ability'
@@ -120,7 +122,7 @@ export class DeckHelperRevamp {
             <div><strong>DeckHelper</strong><span>Card RNG Expansion</span></div>
           </div>
           <div class="rv-header-stats">
-            <span><b>${this.ownedCopies()}</b> cards</span>
+            <span><b>${this.ownedCopies()}/${MAX_SELECTED_CARDS}</b> cards</span>
             <span><b>${this.state.inventory.statAuras.length + this.state.inventory.abilityAuras.length}</b> auras</span>
             <span><b>${this.state.favorites.length}</b> saved</span>
           </div>
@@ -165,7 +167,7 @@ export class DeckHelperRevamp {
       </section>
 
       <section class="rv-panel">
-        <div class="rv-section-head"><div><h2>Your cards</h2><p>Locking here is optional. You can also lock cards directly on the Optimize page.</p></div><b>${this.state.inventory.cards.length} variants · ${this.ownedCopies()} copies</b></div>
+        <div class="rv-section-head"><div><h2>Your cards</h2><p>Locking here is optional. You can also lock cards directly on the Optimize page.</p></div><b>${this.ownedCopies()}/${MAX_SELECTED_CARDS} cards · ${this.state.inventory.cards.length} variants</b></div>
         ${this.state.inventory.cards.length ? `<div class="rv-search small"><span>⌕</span><input id="inventory-search" value="${escapeHtml(this.inventorySearch)}" placeholder="Search your inventory…"></div>` : ''}
         <div class="rv-owned-list">${owned.length ? owned.map((card) => this.renderOwnedCard(card)).join('') : `<div class="rv-empty"><strong>${this.state.inventory.cards.length ? 'No matching cards' : 'Your inventory is empty'}</strong><span>${this.state.inventory.cards.length ? 'Try a different search.' : 'Use the card list above to add your first card.'}</span></div>`}</div>
       </section>
@@ -184,6 +186,7 @@ export class DeckHelperRevamp {
     const variantKey = cardVariantKey(card.name, borders)
     const owned = this.state.inventory.cards.find((item) => cardVariantKey(item.cardName, item.borders) === variantKey)
     const description = card.ability ? abilities[card.ability] : ''
+    const atCardLimit = this.ownedCopies() >= MAX_SELECTED_CARDS
     return `<article class="rv-catalog-card">
       ${this.renderArt(card.name, borders)}
       <div class="rv-catalog-body">
@@ -192,7 +195,7 @@ export class DeckHelperRevamp {
         <div class="rv-border-row" aria-label="Card borders">
           ${CARD_BORDERS.map((border) => `<button class="rv-border ${borders.includes(border) ? 'active' : ''}" data-action="catalog-border" data-name="${escapeHtml(card.name)}" data-border="${border}" title="${border}">${border[0]}</button>`).join('')}
         </div>
-        <button class="rv-add-card ${owned ? 'owned' : ''}" data-action="catalog-add" data-name="${escapeHtml(card.name)}">${owned ? `Add another · owned ×${owned.quantity}` : '+ Add to inventory'}</button>
+        <button class="rv-add-card ${owned ? 'owned' : ''}" data-action="catalog-add" data-name="${escapeHtml(card.name)}" ${atCardLimit ? 'disabled' : ''}>${atCardLimit ? `Inventory full · ${MAX_SELECTED_CARDS}/${MAX_SELECTED_CARDS}` : owned ? `Add another · owned ×${owned.quantity}` : '+ Add to inventory'}</button>
       </div>
     </article>`
   }
@@ -206,7 +209,7 @@ export class DeckHelperRevamp {
         ${this.renderArt(card.cardName, card.borders, true)}
         <div class="rv-owned-info"><strong>${escapeHtml(card.cardName)}</strong><span>${escapeHtml(borderLabel(card.borders))}</span><small>${escapeHtml(def?.ability || 'No ability')}</small></div>
       </div>
-      <div class="rv-qty" aria-label="Quantity"><button data-action="qty-minus" data-key="${key}">−</button><b>×${card.quantity}</b><button data-action="qty-plus" data-key="${key}">+</button></div>
+      <div class="rv-qty" aria-label="Quantity"><button data-action="qty-minus" data-key="${key}">−</button><b>×${card.quantity}</b><button data-action="qty-plus" data-key="${key}" ${this.ownedCopies() >= MAX_SELECTED_CARDS ? 'disabled' : ''}>+</button></div>
       <div class="rv-lock-control">
         <button class="rv-lock-btn ${locked ? 'active' : ''}" data-action="card-lock" data-key="${key}">${locked ? '✓ Locked' : 'Lock in deck'}</button>
         ${locked ? `<div class="rv-position"><span>Position</span>${['Any', '1', '2', '3', '4'].map((label, index) => {
@@ -237,12 +240,13 @@ export class DeckHelperRevamp {
   }
 
   private renderAuraColumn(kind: AuraKind, title: string, owned: OwnedAura[], available: typeof depthSelectableAuras) {
-    return `<div class="rv-aura-column"><div class="rv-aura-head"><strong>${title}</strong><span>${owned.length} owned</span></div>
+    const atAuraLimit = kind === 'stat' && owned.length >= MAX_STAT_AURAS
+    return `<div class="rv-aura-column"><div class="rv-aura-head"><strong>${title}</strong><span>${kind === 'stat' ? `${owned.length}/${MAX_STAT_AURAS}` : owned.length} owned</span></div>
       ${owned.length ? `<div class="rv-aura-owned">${owned.map((aura) => {
         const def = auras.find((entry) => entry.name === aura.auraName)
         return `<div class="rv-aura-row"><div><strong>${escapeHtml(aura.auraName)}</strong><small>${escapeHtml(def?.skillName || '')}</small></div><select data-action="aura-border" data-kind="${kind}" data-name="${escapeHtml(aura.auraName)}">${AURA_BORDERS.map((border) => `<option value="${border}" ${aura.borders[0] === border ? 'selected' : ''}>${border}</option>`).join('')}</select><button data-action="remove-aura" data-kind="${kind}" data-name="${escapeHtml(aura.auraName)}">×</button></div>`
       }).join('')}</div>` : '<p class="rv-muted">None added yet.</p>'}
-      <div class="rv-aura-add"><select id="add-${kind}-aura"><option value="">Choose an aura…</option>${available.map((aura) => `<option value="${escapeHtml(aura.name)}">${escapeHtml(aura.name)}${aura.skillName ? ` · ${escapeHtml(aura.skillName)}` : ''}</option>`).join('')}</select><button data-action="add-aura" data-kind="${kind}">Add</button></div>
+      <div class="rv-aura-add"><select id="add-${kind}-aura" ${atAuraLimit ? 'disabled' : ''}><option value="">${atAuraLimit ? `Stat Aura limit reached (${MAX_STAT_AURAS})` : 'Choose an aura…'}</option>${available.map((aura) => `<option value="${escapeHtml(aura.name)}">${escapeHtml(aura.name)}${aura.skillName ? ` · ${escapeHtml(aura.skillName)}` : ''}</option>`).join('')}</select><button data-action="add-aura" data-kind="${kind}" ${atAuraLimit ? 'disabled' : ''}>Add</button></div>
     </div>`
   }
 
@@ -255,7 +259,7 @@ export class DeckHelperRevamp {
     const inventory = [...this.state.inventory.cards].sort((a, b) => Number(b.locked) - Number(a.locked) || b.quantity - a.quantity || a.cardName.localeCompare(b.cardName))
     const lockedStat = this.state.inventory.statAuras.find((aura) => aura.locked)
     const lockedAbility = this.state.inventory.abilityAuras.find((aura) => aura.locked)
-    const canSearch = this.ownedCopies() >= 4 && !this.worker
+    const canSearch = this.ownedCopies() >= 4 && this.ownedCopies() <= MAX_SELECTED_CARDS && this.state.inventory.statAuras.length <= MAX_STAT_AURAS && !this.worker
     return `
       <section class="rv-hero">
         <div><span>Step 2</span><h1>Find the best deck</h1><p>Everything is automatic unless you lock something below.</p></div>
@@ -426,6 +430,11 @@ export class DeckHelperRevamp {
   private addCard(name: string, borders: BorderName[]) {
     const definition = cardDefinition(name)
     if (!definition || (definition.unobtainable && definition.name !== 'Conqueror')) return
+    if (this.ownedCopies() >= MAX_SELECTED_CARDS) {
+      this.error = `You can select up to ${MAX_SELECTED_CARDS} total card copies.`
+      this.render()
+      return
+    }
     const normalized = canonicalBorders(borders)
     const key = cardVariantKey(name, normalized)
     const existing = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders) === key)
@@ -439,6 +448,11 @@ export class DeckHelperRevamp {
   private changeQuantity(encodedKey: string, delta: number) {
     const card = this.findOwned(encodedKey)
     if (!card) return
+    if (delta > 0 && this.ownedCopies() >= MAX_SELECTED_CARDS) {
+      this.error = `You can select up to ${MAX_SELECTED_CARDS} total card copies.`
+      this.render()
+      return
+    }
     if (delta < 0 && card.quantity <= 1) {
       this.removeCard(encodedKey)
       return
@@ -512,6 +526,11 @@ export class DeckHelperRevamp {
     const select = document.getElementById(`add-${kind}-aura`) as HTMLSelectElement | null
     const name = select?.value || ''
     if (!name || this.auraList(kind).some((aura) => aura.auraName === name)) return
+    if (kind === 'stat' && this.state.inventory.statAuras.length >= MAX_STAT_AURAS) {
+      this.error = `You can test up to ${MAX_STAT_AURAS} Stat Auras at a time.`
+      this.render()
+      return
+    }
     this.auraList(kind).push({ auraName: name, borders: ['Base'], locked: false })
     this.persist(); this.render()
   }
@@ -568,6 +587,18 @@ export class DeckHelperRevamp {
       this.render()
       return
     }
+    if (this.ownedCopies() > MAX_SELECTED_CARDS) {
+      this.error = `Reduce your selected inventory to ${MAX_SELECTED_CARDS} card copies or fewer.`
+      this.tab = 'inventory'
+      this.render()
+      return
+    }
+    if (this.state.inventory.statAuras.length > MAX_STAT_AURAS) {
+      this.error = `Choose no more than ${MAX_STAT_AURAS} Stat Auras to test.`
+      this.tab = 'inventory'
+      this.render()
+      return
+    }
     this.error = ''
     this.results = []
     this.progress = null
@@ -580,8 +611,17 @@ export class DeckHelperRevamp {
     this.worker = new Worker(new URL('./optimizer-worker.ts', import.meta.url), { type: 'module' })
     this.worker.onmessage = (event: MessageEvent<WorkerOutbound>) => {
       const message = event.data
-      if (message.type === 'progress') this.progress = message.progress
-      else if (message.type === 'search-result') { this.results = message.results; this.progress = null; this.finishWorker() }
+      if (message.type === 'progress') {
+        this.progress = message.progress
+        if (this.tab === 'optimize') {
+          const current = this.root.querySelector<HTMLElement>('.rv-progress')
+          const html = this.renderProgress()
+          if (current && html) current.outerHTML = html
+          else if (!current) this.render()
+        }
+        return
+      }
+      if (message.type === 'search-result') { this.results = message.results; this.progress = null; this.finishWorker() }
       else if (message.type === 'error') { this.error = message.message; this.progress = null; this.finishWorker() }
       this.render()
     }
@@ -708,7 +748,11 @@ export class DeckHelperRevamp {
 
   private loadInventory() {
     try {
-      this.state.inventory = importInventoryCode(this.inventoryCodeText)
+      const imported = importInventoryCode(this.inventoryCodeText)
+      const importedCopies = imported.cards.reduce((sum, card) => sum + card.quantity, 0)
+      if (importedCopies > MAX_SELECTED_CARDS) throw new Error(`Inventory codes can contain at most ${MAX_SELECTED_CARDS} total card copies.`)
+      if (imported.statAuras.length > MAX_STAT_AURAS) throw new Error(`Inventory codes can contain at most ${MAX_STAT_AURAS} Stat Auras.`)
+      this.state.inventory = imported
       this.results = []
       this.error = ''
       this.inventoryCodeStatus = `Loaded ${this.ownedCopies()} card copies.`
