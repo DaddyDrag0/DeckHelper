@@ -24,29 +24,17 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path('src/revamp.ts')
           text = p.read_text()
-
           logo = '            <div class="rv-logo">DH</div>\n'
           if logo not in text:
               raise SystemExit('DH logo markup not found')
           text = text.replace(logo, '', 1)
-
-          old = """    const next = document.getElementById(id) as HTMLInputElement | null
-    if (next) { next.focus(); next.setSelectionRange(position, position) }
-"""
-          new = """    const next = document.getElementById(id) as HTMLInputElement | null
-    if (id === 'ban-search') {
-      const details = next?.closest('details') as HTMLDetailsElement | null
-      if (details) details.open = true
-    }
-    if (next) { next.focus(); next.setSelectionRange(position, position) }
-"""
+          old = "    const next = document.getElementById(id) as HTMLInputElement | null\n    if (next) { next.focus(); next.setSelectionRange(position, position) }\n"
+          new = "    const next = document.getElementById(id) as HTMLInputElement | null\n    if (id === 'ban-search') {\n      const details = next?.closest('details') as HTMLDetailsElement | null\n      if (details) details.open = true\n    }\n    if (next) { next.focus(); next.setSelectionRange(position, position) }\n"
           if old not in text:
               raise SystemExit('renderAndRefocus block not found')
           text = text.replace(old, new, 1)
-
           p.write_text(text)
           PY
       - run: npm ci
