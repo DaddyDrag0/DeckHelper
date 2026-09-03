@@ -211,23 +211,14 @@ worker.onmessage = async (event: MessageEvent<WorkerInbound>) => {
   try {
     const request = event.data.request
     if (request.kind === 'search') {
-      let lastProgress: OptimizerProgress | undefined
-      const results = await searchBestTeams(request.inventory, request.settings, (progress) => {
-        lastProgress = progress
-        send({ type: 'progress', progress })
-      }, runParallelDepthsBatch, request.bannedCardNames)
-
-      const expandedResults = await expandAbilityAuraVariants(
-        results,
+      const results = await searchBestTeams(
         request.inventory,
         request.settings,
+        (progress) => send({ type: 'progress', progress }),
+        runParallelDepthsBatch,
         request.bannedCardNames,
-        (message) => {
-          if (!lastProgress) return
-          send({ type: 'progress', progress: { ...lastProgress, phase: 'final', message } })
-        },
       )
-      send({ type: 'search-result', results: expandedResults })
+      send({ type: 'search-result', results })
       return
     }
 

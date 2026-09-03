@@ -21,17 +21,17 @@ import { cardVariantKey, canonicalBorders, teamCardVariantKey } from '../card-va
 const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
 const AURA_BY_NAME = new Map(auras.map((aura) => [aura.name, aura] as const))
 
-const SEARCH_SEED_POOL_SIZE = 32
-const QUICK_TRIALS = 5
+const SEARCH_SEED_POOL_SIZE = 48
 const MAX_EXHAUSTIVE_COMBINATIONS = 100_000
-const SMALL_SEARCH_MIDDLE_CAP = 600
-const SMALL_SEARCH_ORDER_CAP = 96
-const SMALL_SEARCH_FINALIST_CAP = 30
-const FAST_QUICK_TRIALS = 2
-const FAST_SEARCH_MIDDLE_CAP = 240
-const FAST_SEARCH_ORDER_CAP = 40
-const FAST_SEARCH_FINALIST_CAP = 10
-const FAST_FINAL_SEED_COUNT = 5
+const BASELINE_SEED_COUNT = 2
+const DEFAULT_REFINE_CAP = 180
+const DEFAULT_FINALIST_CAP = 14
+const MAX_ORDER_CANDIDATES = 64
+const ABILITY_AURA_SHORTLIST = 5
+const AURA_PAIR_KEEP = 3
+const DEFAULT_FINAL_SEED_COUNT = 17
+const DEEP_RECHECK_COUNT = 5
+const DEEP_RECHECK_SEED_COUNT = 29
 
 export type ExactDepthsBatchRunner = (loadout: TeamLoadout, options: DepthsBatchOptions) => Promise<DepthsBatchResult>
 
@@ -51,10 +51,16 @@ export const DEFAULT_SEARCH_SETTINGS: SearchSettings = {
   mode: 'full',
   candidateCap: MAX_EXHAUSTIVE_COMBINATIONS,
   quickCandidateCap: 1_000,
-  middleCandidateCap: 120,
-  finalistCap: 10,
-  finalSeedCount: 15,
+  middleCandidateCap: DEFAULT_REFINE_CAP,
+  finalistCap: DEFAULT_FINALIST_CAP,
+  finalSeedCount: DEFAULT_FINAL_SEED_COUNT,
   maxFloor: 100_000,
+}
+
+interface AuraPair {
+  statAura: AuraSelection | null
+  abilityAura: AuraSelection | null
+  score: number
 }
 
 interface Candidate {
@@ -65,6 +71,7 @@ interface Candidate {
   quickAverage: number
   quickBest: number
   middleEstimate: number
+  auraPairs: AuraPair[]
   trusted: boolean
   unsupported: Set<string>
 }
@@ -96,15 +103,15 @@ interface SearchRuntime {
 }
 
 function settingsWithDefaults(settings?: Partial<SearchSettings>): SearchSettings {
-  const mode = settings?.mode === 'fast' ? 'fast' : 'full'
-  const defaultFinalSeeds = mode === 'fast' ? FAST_FINAL_SEED_COUNT : DEFAULT_SEARCH_SETTINGS.finalSeedCount
   return {
-    mode,
+    // DeckHelper now has one optimizer path. Keep the legacy field for stored/request
+    // compatibility, but never downgrade the search to an approximate mode.
+    mode: 'full',
     candidateCap: Math.max(100, Math.floor(settings?.candidateCap ?? DEFAULT_SEARCH_SETTINGS.candidateCap)),
     quickCandidateCap: Math.max(20, Math.floor(settings?.quickCandidateCap ?? DEFAULT_SEARCH_SETTINGS.quickCandidateCap)),
     middleCandidateCap: Math.max(10, Math.floor(settings?.middleCandidateCap ?? DEFAULT_SEARCH_SETTINGS.middleCandidateCap)),
     finalistCap: Math.max(3, Math.floor(settings?.finalistCap ?? DEFAULT_SEARCH_SETTINGS.finalistCap)),
-    finalSeedCount: Math.max(3, Math.floor(settings?.finalSeedCount ?? defaultFinalSeeds)) | 1,
+    finalSeedCount: Math.max(3, Math.floor(settings?.finalSeedCount ?? DEFAULT_SEARCH_SETTINGS.finalSeedCount)) | 1,
     maxFloor: Math.max(100, Math.floor(settings?.maxFloor ?? DEFAULT_SEARCH_SETTINGS.maxFloor)),
   }
 }
@@ -480,44 +487,85 @@ function validOrders(cards: TeamCard[], inventoryMap: Map<string, OwnedCard>): T
 }
 
 function probeScore(loadout: TeamLoadout, center: number, runtime: SearchRuntime, maxFloor: number, seeds: number[]): number {
-  const floors = [0.94, 1, 1.06].map((factor) => Math.max(1, Math.min(maxFloor, Math.round(center * factor))))
+  const floors = [0.95, 1, 1.05].map((factor) => Math.max(1, Math.min(maxFloor, Math.round(center * factor))))
   let score = 0
-  for (const floor of floors) {
-    const probe = probeFloor(loadout, floor, seeds.slice(0, 3), runtime)
-    score += probe.wins * 1_000
-    score -= probe.averageTurns * 0.01
+  for (let index = 0; index < floors.length; index++) {
+    const probe = probeFloor(loadout, floors[index], seeds.slice(0, 3), runtime)
+    const winRate = probe.wins / Math.max(1, probe.runs)
+    const difficultyWeight = index === 0 ? 0.9 : index === 1 ? 1 : 1.15
+    score += winRate * 1_000 * difficultyWeight
+    // Only use speed as a small tie-breaker. Winning the hard floor matters far more.
+    score += Math.max(0, 250 - probe.averageTurns) * 0.02
   }
   return score
 }
 
+function candidateIdentity(candidate: Candidate): string {
+  return [...candidate.names].sort().join('\u0000')
+}
+
+function candidateCoverageKeys(candidate: Candidate): string[] {
+  const keys = [...candidate.names].sort()
+  const coverage = new Set<string>()
+  for (const key of keys) coverage.add(`1:${key}`)
+  for (let left = 0; left < keys.length; left++) {
+    for (let right = left + 1; right < keys.length; right++) coverage.add(`2:${keys[left]}\u0001${keys[right]}`)
+  }
+  return [...coverage]
+}
+
+/**
+ * Keep the strongest teams, then add the strongest available team covering every
+ * owned card and card-pair. This is deliberately broader than a raw-stat top-N:
+ * pair-specific abilities and Skill Auras get a chance to prove themselves before
+ * the optimizer prunes the field.
+ */
+function coverageCandidates(candidates: Candidate[], topCap: number): Candidate[] {
+  const sorted = [...candidates].sort((a, b) =>
+    b.quickEstimate - a.quickEstimate
+    || b.quickAverage - a.quickAverage
+    || b.heuristic - a.heuristic
+  )
+  const selected = sorted.slice(0, Math.min(topCap, sorted.length))
+  const selectedIds = new Set(selected.map(candidateIdentity))
+  const covered = new Set<string>()
+  for (const candidate of selected) for (const key of candidateCoverageKeys(candidate)) covered.add(key)
+
+  for (const candidate of sorted) {
+    const coverage = candidateCoverageKeys(candidate)
+    if (!coverage.some((key) => !covered.has(key))) continue
+    const id = candidateIdentity(candidate)
+    if (!selectedIds.has(id)) {
+      selected.push(candidate)
+      selectedIds.add(id)
+    }
+    for (const key of coverage) covered.add(key)
+  }
+  return selected
+}
+
 function optimizeAuraAndOrder(
   candidate: Candidate,
-  inventory: InventoryState,
+  _inventory: InventoryState,
   inventoryMap: Map<string, OwnedCard>,
   runtime: SearchRuntime,
   maxFloor: number,
   seeds: number[],
 ): Candidate {
-  const statOptions = bestStatAuras(candidate.loadout.cards, auraOptions(inventory, 'stat'), 2)
-  const abilityOptions = auraOptions(inventory, 'ability')
-
-  const auraPairs: Array<{ statAura: AuraSelection | null; abilityAura: AuraSelection | null; score: number }> = []
-  for (const statAura of statOptions) {
-    for (const abilityAura of abilityOptions) {
-      const loadout: TeamLoadout = { cards: candidate.loadout.cards, statAura, abilityAura }
-      auraPairs.push({ statAura, abilityAura, score: probeScore(loadout, candidate.middleEstimate, runtime, maxFloor, seeds) })
-    }
+  const fallback: AuraPair = {
+    statAura: candidate.loadout.statAura ?? null,
+    abilityAura: candidate.loadout.abilityAura ?? null,
+    score: 0,
   }
-  auraPairs.sort((a, b) => b.score - a.score)
-  const bestPairs = auraPairs.slice(0, Math.min(2, auraPairs.length))
+  const pairs = (candidate.auraPairs.length ? candidate.auraPairs : [fallback]).slice(0, AURA_PAIR_KEEP)
+  const orders = validOrders(candidate.loadout.cards, inventoryMap)
 
   let bestLoadout = candidate.loadout
   let bestScore = Number.NEGATIVE_INFINITY
-  const orders = validOrders(candidate.loadout.cards, inventoryMap)
-  for (const pair of bestPairs) {
+  for (const pair of pairs) {
     for (const order of orders) {
       const loadout: TeamLoadout = { cards: order, statAura: pair.statAura, abilityAura: pair.abilityAura }
-      const score = probeScore(loadout, candidate.middleEstimate, runtime, maxFloor, seeds)
+      const score = probeScore(loadout, candidate.middleEstimate, runtime, maxFloor, seeds.slice(0, 3))
       if (score > bestScore) {
         bestScore = score
         bestLoadout = loadout
@@ -525,7 +573,22 @@ function optimizeAuraAndOrder(
     }
   }
 
-  return { ...candidate, loadout: bestLoadout }
+  // Re-measure after order changes so a lucky one-floor order probe cannot carry a team.
+  const threshold = estimateThreshold(bestLoadout, seeds.slice(0, 5), runtime, maxFloor, candidate.middleEstimate, 4)
+  candidate.trusted = candidate.trusted && threshold.trusted
+  for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+  return { ...candidate, loadout: bestLoadout, middleEstimate: threshold.estimate }
+}
+
+function percentile(sorted: number[], proportion: number): number {
+  if (!sorted.length) return 1
+  if (sorted.length === 1) return sorted[0]
+  const position = (sorted.length - 1) * Math.max(0, Math.min(1, proportion))
+  const low = Math.floor(position)
+  const high = Math.ceil(position)
+  if (low === high) return sorted[low]
+  const mix = position - low
+  return sorted[low] * (1 - mix) + sorted[high] * mix
 }
 
 function metricStats(values: number[], trusted: boolean, unsupported: Set<string>): TeamMetrics {
@@ -540,6 +603,8 @@ function metricStats(values: number[], trusted: boolean, unsupported: Set<string
     minimumDepth: sorted[0] ?? 1,
     maximumDepth: sorted[sorted.length - 1] ?? 1,
     consistency: Math.sqrt(variance),
+    reliabilityDepth: percentile(sorted, 0.25),
+    upperQuartileDepth: percentile(sorted, 0.75),
     samples: sorted.length,
     trusted,
     unsupportedAbilities: [...unsupported].sort(),
@@ -598,12 +663,23 @@ function approximateFinalMetrics(
   return metricStats(values, trusted, unsupported)
 }
 
+function practicalTeamScore(metrics: TeamMetrics): number {
+  const reliable = metrics.reliabilityDepth ?? metrics.minimumDepth
+  // Favor the floor a team reaches in ordinary/bad runs, while still valuing ceiling.
+  // Consistency is a penalty rather than a hard gate so strong teams are not discarded.
+  return reliable * 0.45
+    + metrics.medianDepth * 0.35
+    + metrics.averageDepth * 0.20
+    - metrics.consistency * 0.06
+}
+
 function compareRankedTeams(a: RankedTeam, b: RankedTeam): number {
-  return b.metrics.medianDepth - a.metrics.medianDepth
+  return practicalTeamScore(b.metrics) - practicalTeamScore(a.metrics)
+    || (b.metrics.reliabilityDepth ?? b.metrics.minimumDepth) - (a.metrics.reliabilityDepth ?? a.metrics.minimumDepth)
+    || b.metrics.medianDepth - a.metrics.medianDepth
     || b.metrics.averageDepth - a.metrics.averageDepth
-    || b.metrics.minimumDepth - a.metrics.minimumDepth
     || a.metrics.consistency - b.metrics.consistency
-    || b.metrics.maximumDepth - a.metrics.maximumDepth
+    || b.metrics.minimumDepth - a.metrics.minimumDepth
 }
 
 function rankedId(loadout: TeamLoadout): string {
@@ -621,13 +697,11 @@ export async function searchBestTeams(
   bannedCardNames: string[] = [],
 ): Promise<RankedTeam[]> {
   const settings = settingsWithDefaults(settingsInput)
-  const fastMode = settings.mode === 'fast'
-  const quickTrials = fastMode ? FAST_QUICK_TRIALS : QUICK_TRIALS
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
   const { validCards } = validateInventory(inventory)
   const inventoryMap = new Map(validCards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
   const statOptions = auraOptions(inventory, 'stat')
-  auraOptions(inventory, 'ability')
+  const abilityOptions = auraOptions(inventory, 'ability')
 
   const generated = generateTeamNameSets(inventory, settings.candidateCap)
   const runtime: SearchRuntime = {
@@ -640,7 +714,7 @@ export async function searchBestTeams(
     fullySimulated: 0,
     fullySimulatedTotal: 0,
   }
-  emitProgress(runtime, 'prepare', onProgress, undefined, 'Preparing candidate teams')
+  emitProgress(runtime, 'prepare', onProgress, undefined, `Building all ${generated.possible.toLocaleString()} legal 4-card teams`)
 
   let candidates = generated.sets.map((names): Candidate => {
     const ordered = buildDefaultOrder(names, inventoryMap)
@@ -654,50 +728,47 @@ export async function searchBestTeams(
       quickAverage: 1,
       quickBest: 1,
       middleEstimate: 1,
+      auraPairs: [],
       trusted: true,
       unsupported: new Set<string>(),
     }
   })
 
-  const exhaustiveQuick = generated.sets.length === generated.possible
-  if (!exhaustiveQuick) throw new Error('Optimizer candidate generation was not exhaustive.')
   runtime.remainingCandidates = candidates.length
-  emitProgress(
-    runtime,
-    'quick',
-    onProgress,
-    undefined,
-    `Testing all ${generated.possible.toLocaleString()} team combinations × ${quickTrials} random quick trials${fastMode ? ' (Fast)' : ''}`,
-  )
+  emitProgress(runtime, 'quick', onProgress, undefined, 'Scouting every team with every owned Stat Aura')
 
+  // Stage 1: every legal card composition gets measured. Stat Auras are cheap enough
+  // (the UI caps them at four), so no Stat Aura is discarded by a raw-stat heuristic.
   for (let index = 0; index < candidates.length; index++) {
     const candidate = candidates[index]
-    const quickValues: number[] = []
-    for (let trial = 0; trial < quickTrials; trial++) {
-      const threshold = estimateThreshold(
-        candidate.loadout,
-        [searchSeeds[trial % searchSeeds.length]],
-        runtime,
-        settings.maxFloor,
-        undefined,
-        3,
-      )
-      quickValues.push(threshold.estimate)
+    let bestEstimate = 1
+    let bestHeuristic = Number.NEGATIVE_INFINITY
+    let bestLoadout = candidate.loadout
+
+    for (const statAura of statOptions) {
+      const loadout: TeamLoadout = { cards: candidate.loadout.cards, statAura, abilityAura: null }
+      const threshold = estimateThreshold(loadout, searchSeeds.slice(0, BASELINE_SEED_COUNT), runtime, settings.maxFloor, undefined, 2)
+      const heuristic = rawLoadoutScore(loadout.cards, statAura)
       candidate.trusted = candidate.trusted && threshold.trusted
       for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
+      if (threshold.estimate > bestEstimate || (threshold.estimate === bestEstimate && heuristic > bestHeuristic)) {
+        bestEstimate = threshold.estimate
+        bestHeuristic = heuristic
+        bestLoadout = loadout
+      }
     }
-    const sortedQuick = [...quickValues].sort((a, b) => a - b)
-    candidate.quickAverage = sortedQuick.reduce((sum, value) => sum + value, 0) / Math.max(1, sortedQuick.length)
-    candidate.quickEstimate = sortedQuick[Math.floor(sortedQuick.length / 2)] ?? 1
-    candidate.quickBest = sortedQuick[sortedQuick.length - 1] ?? 1
+
+    candidate.loadout = bestLoadout
+    candidate.heuristic = bestHeuristic
+    candidate.quickEstimate = bestEstimate
+    candidate.quickAverage = bestEstimate
+    candidate.quickBest = bestEstimate
+    candidate.middleEstimate = bestEstimate
     runtime.quickTested = index + 1
-    if (index % 12 === 0 || index + 1 === candidates.length) {
-      const best = [...candidates.slice(0, index + 1)].sort((a, b) =>
-        b.quickEstimate - a.quickEstimate
-        || b.quickAverage - a.quickAverage
-        || b.quickBest - a.quickBest
-        || b.heuristic - a.heuristic
-      )[0]
+    runtime.remainingCandidates = candidates.length - index - 1
+
+    if (index % 10 === 0 || index + 1 === candidates.length) {
+      const best = [...candidates.slice(0, index + 1)].sort((a, b) => b.quickEstimate - a.quickEstimate || b.heuristic - a.heuristic)[0]
       const currentBest = best ? {
         id: rankedId(best.loadout),
         loadout: best.loadout,
@@ -708,36 +779,71 @@ export async function searchBestTeams(
     }
   }
 
-  candidates.sort((a, b) =>
-    b.quickEstimate - a.quickEstimate
-    || b.quickAverage - a.quickAverage
-    || b.quickBest - a.quickBest
-    || b.heuristic - a.heuristic
-  )
-  const middleCandidateCap = exhaustiveQuick
-    ? Math.max(settings.middleCandidateCap, fastMode ? FAST_SEARCH_MIDDLE_CAP : SMALL_SEARCH_MIDDLE_CAP)
-    : settings.middleCandidateCap
-  candidates = candidates.slice(0, Math.min(middleCandidateCap, candidates.length))
-  runtime.remainingCandidates = candidates.length
-  emitProgress(runtime, 'middle', onProgress, undefined, 'Refining stronger candidates with shared seeds')
+  candidates.sort((a, b) => b.quickEstimate - a.quickEstimate || b.heuristic - a.heuristic)
 
-  for (let index = 0; index < candidates.length; index++) {
-    const candidate = candidates[index]
-    const threshold = estimateThreshold(candidate.loadout, searchSeeds.slice(0, 3), runtime, settings.maxFloor, candidate.quickEstimate, 4)
+  // Stage 2: keep the top field PLUS the best team covering every card/card pair.
+  // This is the anti-meta-pruning step that lets pair synergies and Skill Auras rescue
+  // teams that look weaker on paper.
+  const refinement = coverageCandidates(candidates, Math.min(settings.middleCandidateCap, candidates.length))
+  runtime.remainingCandidates = refinement.length
+  runtime.finalists = refinement.length
+  emitProgress(runtime, 'middle', onProgress, undefined, `Testing Skill Aura synergy on ${refinement.length.toLocaleString()} promising/coverage teams`)
+
+  for (let index = 0; index < refinement.length; index++) {
+    const candidate = refinement[index]
+
+    // First let every owned Skill Aura audition on this exact composition. One shared
+    // seed makes this inexpensive and fair; the survivors are retested below.
+    const abilityScores = abilityOptions.map((abilityAura) => ({
+      abilityAura,
+      score: probeScore(
+        { ...candidate.loadout, abilityAura },
+        candidate.quickEstimate,
+        runtime,
+        settings.maxFloor,
+        searchSeeds.slice(0, 1),
+      ),
+    })).sort((a, b) => b.score - a.score)
+
+    const abilityShortlist = abilityScores.slice(0, Math.min(ABILITY_AURA_SHORTLIST, abilityScores.length)).map((entry) => entry.abilityAura)
+    const pairScores: AuraPair[] = []
+    for (const statAura of statOptions) {
+      for (const abilityAura of abilityShortlist) {
+        const loadout: TeamLoadout = { cards: candidate.loadout.cards, statAura, abilityAura }
+        pairScores.push({
+          statAura,
+          abilityAura,
+          score: probeScore(loadout, candidate.quickEstimate, runtime, settings.maxFloor, searchSeeds.slice(0, 2)),
+        })
+      }
+    }
+    pairScores.sort((a, b) => b.score - a.score)
+    candidate.auraPairs = pairScores.slice(0, Math.min(AURA_PAIR_KEEP, pairScores.length))
+
+    const bestPair = candidate.auraPairs[0] ?? {
+      statAura: candidate.loadout.statAura ?? null,
+      abilityAura: candidate.loadout.abilityAura ?? null,
+      score: 0,
+    }
+    candidate.loadout = { cards: candidate.loadout.cards, statAura: bestPair.statAura, abilityAura: bestPair.abilityAura }
+    const threshold = estimateThreshold(candidate.loadout, searchSeeds.slice(0, 5), runtime, settings.maxFloor, candidate.quickEstimate, 4)
     candidate.middleEstimate = threshold.estimate
     candidate.trusted = candidate.trusted && threshold.trusted
     for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
-    if (index % 8 === 0 || index + 1 === candidates.length) {
-      runtime.remainingCandidates = candidates.length - index - 1
-      emitProgress(runtime, 'middle', onProgress)
-    }
+
+    runtime.remainingCandidates = refinement.length - index - 1
+    runtime.finalists = refinement.length - index - 1
+    if (index % 4 === 0 || index + 1 === refinement.length) emitProgress(runtime, 'middle', onProgress)
   }
 
-  candidates.sort((a, b) => b.middleEstimate - a.middleEstimate || b.quickEstimate - a.quickEstimate)
-  const orderCandidateCap = exhaustiveQuick ? (fastMode ? FAST_SEARCH_ORDER_CAP : SMALL_SEARCH_ORDER_CAP) : 24
-  const orderCandidates = candidates.slice(0, Math.min(orderCandidateCap, candidates.length))
+  refinement.sort((a, b) => b.middleEstimate - a.middleEstimate || b.quickEstimate - a.quickEstimate || b.heuristic - a.heuristic)
+
+  // Stage 3: order is part of the build, not an afterthought. Try every legal order
+  // for the strongest aura pairs on a reasonably broad survivor pool.
+  const orderCandidateCap = Math.min(refinement.length, MAX_ORDER_CANDIDATES, Math.max(24, settings.finalistCap * 4))
+  const orderCandidates = refinement.slice(0, orderCandidateCap)
   runtime.finalists = orderCandidates.length
-  emitProgress(runtime, 'order', onProgress, undefined, 'Optimizing auras and card order')
+  emitProgress(runtime, 'order', onProgress, undefined, `Testing every legal card order on the top ${orderCandidates.length} teams`)
 
   const optimized: Candidate[] = []
   for (let index = 0; index < orderCandidates.length; index++) {
@@ -746,38 +852,62 @@ export async function searchBestTeams(
     emitProgress(runtime, 'order', onProgress)
   }
 
-  const rechecked = optimized.map((candidate) => {
-    const threshold = estimateThreshold(candidate.loadout, searchSeeds.slice(0, 5), runtime, settings.maxFloor, candidate.middleEstimate, 4)
-    candidate.middleEstimate = threshold.estimate
-    candidate.trusted = candidate.trusted && threshold.trusted
-    for (const ability of threshold.unsupported) candidate.unsupported.add(ability)
-    return candidate
-  }).sort((a, b) => b.middleEstimate - a.middleEstimate)
-
-  const finalistCap = exhaustiveQuick
-    ? Math.max(settings.finalistCap, fastMode ? FAST_SEARCH_FINALIST_CAP : SMALL_SEARCH_FINALIST_CAP)
-    : settings.finalistCap
-  const finalists = rechecked.slice(0, Math.min(finalistCap, rechecked.length))
+  optimized.sort((a, b) => b.middleEstimate - a.middleEstimate || b.quickEstimate - a.quickEstimate)
+  const finalists = optimized.slice(0, Math.min(settings.finalistCap, optimized.length))
   runtime.finalists = finalists.length
   runtime.fullySimulated = 0
   runtime.fullySimulatedTotal = finalists.length
-  emitProgress(runtime, 'final', onProgress, undefined, fastMode ? 'Running fast approximate finalist checks' : 'Running parallel exact Depths batches for finalists')
+
+  // Stage 4: all finalists see the SAME exact Depths run seeds. This is common-random-
+  // numbers benchmarking: a hard enemy sequence is hard for everybody instead of one
+  // team randomly drawing an easier final sample than another.
+  const finalBatchSeed = makeSearchSeeds(1)[0]
+  emitProgress(runtime, 'final', onProgress, undefined, `Exact Depths validation: ${settings.finalSeedCount} shared runs per finalist`)
 
   const results: RankedTeam[] = []
   for (let index = 0; index < finalists.length; index++) {
     const candidate = finalists[index]
-    // Shared random seeds are useful while pruning, because every candidate gets the
-    // same benchmark. The final shortlist is intentionally different: each finalist
-    // gets its own fresh randomized Depths samples so it does not replay the same
-    // enemy sequence as every other finalist.
-    const finalistSeeds = makeSearchSeeds(settings.finalSeedCount)
-    const metrics = fastMode
-      ? approximateFinalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor)
-      : await finalMetrics(candidate.loadout, candidate.middleEstimate, settings.finalSeedCount, finalistSeeds, runtime, settings.maxFloor, exactBatchRunner)
-    results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.quickEstimate })
+    const metrics = await finalMetrics(
+      candidate.loadout,
+      candidate.middleEstimate,
+      settings.finalSeedCount,
+      [finalBatchSeed],
+      runtime,
+      settings.maxFloor,
+      exactBatchRunner,
+    )
+    results.push({ id: rankedId(candidate.loadout), loadout: candidate.loadout, metrics, quickEstimate: candidate.middleEstimate })
     runtime.fullySimulated = index + 1
-    const best = [...results].sort(compareRankedTeams)[0]
-    emitProgress(runtime, 'final', onProgress, best)
+    emitProgress(runtime, 'final', onProgress, [...results].sort(compareRankedTeams)[0])
+  }
+
+  results.sort(compareRankedTeams)
+
+  // Stage 5: close top teams get a deeper sample. The default production search uses
+  // 29 paired runs here, while intentionally tiny regression searches stay tiny.
+  if (settings.finalSeedCount >= 11 && results.length > 1) {
+    const recheck = results.slice(0, Math.min(DEEP_RECHECK_COUNT, results.length))
+    const deepRuns = Math.max(settings.finalSeedCount, DEEP_RECHECK_SEED_COUNT)
+    runtime.fullySimulatedTotal = finalists.length + recheck.length
+    emitProgress(runtime, 'final', onProgress, results[0], `Deep validation: ${deepRuns} shared runs on the top ${recheck.length}`)
+
+    for (let index = 0; index < recheck.length; index++) {
+      const result = recheck[index]
+      const metrics = await finalMetrics(
+        result.loadout,
+        result.metrics.medianDepth,
+        deepRuns,
+        [finalBatchSeed],
+        runtime,
+        settings.maxFloor,
+        exactBatchRunner,
+      )
+      const resultIndex = results.findIndex((entry) => entry.id === result.id)
+      if (resultIndex >= 0) results[resultIndex] = { ...result, metrics }
+      runtime.fullySimulated = finalists.length + index + 1
+      results.sort(compareRankedTeams)
+      emitProgress(runtime, 'final', onProgress, results[0])
+    }
   }
 
   return results.sort(compareRankedTeams)

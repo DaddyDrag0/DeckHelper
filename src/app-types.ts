@@ -44,6 +44,10 @@ export interface TeamMetrics {
   minimumDepth: number
   maximumDepth: number
   consistency: number
+  /** 25th percentile death floor: a robust bad/ordinary-run floor. */
+  reliabilityDepth?: number
+  /** 75th percentile death floor, useful for ceiling context. */
+  upperQuartileDepth?: number
   samples: number
   trusted: boolean
   unsupportedAbilities: string[]

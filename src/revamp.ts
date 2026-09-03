@@ -264,8 +264,8 @@ export class DeckHelperRevamp {
       <section class="rv-hero">
         <div><span>Step 2</span><h1>Find the best deck</h1><p>Everything is automatic unless you lock something below.</p></div>
         <div class="rv-run-box">
-          ${this.worker ? `<button class="rv-cancel" data-action="cancel-search">Cancel search</button>` : `<button class="rv-primary big" data-action="start-full" ${canSearch ? '' : 'disabled'}>Find Best Deck</button><button class="rv-secondary" data-action="start-fast" ${canSearch ? '' : 'disabled'}>Quick Search</button>`}
-          <small>${this.ownedCopies() < 4 ? 'Add at least 4 card copies first.' : 'Best Deck = deeper testing · Quick = faster estimate'}</small>
+          ${this.worker ? `<button class="rv-cancel" data-action="cancel-search">Cancel optimizer</button>` : `<button class="rv-primary big" data-action="start-full" ${canSearch ? '' : 'disabled'}>Find Best Deck</button>`}
+          <small>${this.ownedCopies() < 4 ? 'Add at least 4 card copies first.' : 'One thorough search · cards, auras, order, then exact Depths validation'}</small>
         </div>
       </section>
 
@@ -314,7 +314,7 @@ export class DeckHelperRevamp {
   private renderProgress() {
     if (!this.progress) return ''
     const progress = this.progress
-    const labels: Record<OptimizerProgress['phase'], string> = { prepare: 'Preparing', quick: 'Testing candidates', middle: 'Narrowing the field', order: 'Optimizing order & auras', final: 'Final simulations', replacement: 'Testing replacements' }
+    const labels: Record<OptimizerProgress['phase'], string> = { prepare: 'Preparing', quick: 'Team combinations', middle: 'Aura synergy', order: 'Card order', final: 'Exact validation', replacement: 'Testing replacements' }
     const total = Math.max(1, progress.fullySimulatedTotal || progress.quickTested + progress.remainingCandidates)
     const done = progress.fullySimulatedTotal ? progress.fullySimulated : progress.quickTested
     const percent = Math.max(3, Math.min(100, Math.round(done / total * 100)))
@@ -322,12 +322,14 @@ export class DeckHelperRevamp {
   }
 
   private sortedResults() {
-    return [...this.results].sort((a, b) => b.metrics.averageDepth - a.metrics.averageDepth || b.metrics.medianDepth - a.metrics.medianDepth || b.metrics.minimumDepth - a.metrics.minimumDepth).slice(0, 10)
+    // The optimizer already applies the reliability-aware ranking. Do not re-sort it
+    // in the UI with a different formula and accidentally undo the search result.
+    return this.results.slice(0, 10)
   }
 
   private renderResults() {
     const results = this.sortedResults()
-    return `<section class="rv-results"><div class="rv-results-head"><div><span>Results</span><h2>Best decks for your inventory</h2></div><small>${this.searchMode === 'full' ? 'Full Depths simulation' : 'Quick estimate'} · higher depth is better</small></div><div class="rv-result-list">${results.map((result, index) => this.renderResult(result, index)).join('')}</div></section>`
+    return `<section class="rv-results"><div class="rv-results-head"><div><span>Results</span><h2>Best usable decks for your inventory</h2></div><small>Ranked for reliable Depths performance · higher is better</small></div><div class="rv-result-list">${results.map((result, index) => this.renderResult(result, index)).join('')}</div></section>`
   }
 
   private renderResult(result: RankedTeam, index: number) {
@@ -335,7 +337,7 @@ export class DeckHelperRevamp {
     return `<article class="rv-result-card ${index === 0 ? 'winner' : ''}">
       <div class="rv-result-rank"><b>#${index + 1}</b>${index === 0 ? '<span>Best match</span>' : ''}</div>
       <div class="rv-result-team">${result.loadout.cards.map((card, slot) => `<div class="rv-result-slot">${this.renderArt(card.cardName, card.borders, true)}<div><span>Slot ${slot + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small></div></div>`).join('')}</div>
-      <div class="rv-result-meta"><span>Stat Aura <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability Aura <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span><span>Power estimate <b>~${formatNumber(powerEstimate)}</b></span>${this.searchMode === 'full' ? `<span>Median Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span><span>Average <b>${formatNumber(result.metrics.averageDepth, 1)}</b></span>` : `<span>Estimated Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span>`}</div>
+      <div class="rv-result-meta"><span>Stat Aura <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability Aura <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span><span>Power estimate <b>~${formatNumber(powerEstimate)}</b></span><span>Reliable Depth <b>${formatNumber(result.metrics.reliabilityDepth ?? result.metrics.minimumDepth)}</b></span><span>Median Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span><span>Average <b>${formatNumber(result.metrics.averageDepth, 1)}</b></span></div>
       ${result.metrics.trusted ? '' : `<div class="rv-warning">Some mechanics are not fully verified: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
       <div class="rv-result-actions"><button class="rv-primary" data-action="copy-result" data-id="${escapeHtml(result.id)}">Copy Depths Code</button><button data-action="use-result" data-id="${escapeHtml(result.id)}">Use Deck</button><button data-action="save-result" data-id="${escapeHtml(result.id)}">Save</button></div>
     </article>`
@@ -391,7 +393,6 @@ export class DeckHelperRevamp {
     else if (action === 'remove-ban') this.removeBan(target.dataset.name || '')
     else if (action === 'clear-bans') this.clearBans()
     else if (action === 'start-full') this.startSearch('full')
-    else if (action === 'start-fast') this.startSearch('fast')
     else if (action === 'cancel-search') this.cancelWorker()
     else if (action === 'copy-result') void this.copyResult(target.dataset.id || '', target)
     else if (action === 'use-result') this.useResult(target.dataset.id || '')
