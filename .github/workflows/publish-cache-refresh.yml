@@ -1,0 +1,46 @@
+name: Publish Cache Refresh
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-cache-refresh.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Publish fresh build
+        run: |
+          rm -rf assets
+          cp -R dist/assets ./assets
+          cp dist/index.html ./index.html
+          cp dist/version.json ./version.json
+
+          # Compatibility shim for users whose browser still has the pre-fix HTML cached.
+          # That HTML requests this old hashed bundle. Redirect them to a cache-busted URL
+          # so they immediately receive the current index and bundle.
+          cat > assets/source-DUyS3WWm.js <<'EOF'
+          (()=>{const u=new URL(location.href);u.searchParams.set('_v','2026-09-03-2339');location.replace(u.toString())})();
+          EOF
+      - name: Commit published build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/publish-cache-refresh.yml
+          git add -A
+          git commit -m "Force clients onto latest DeckHelper build"
+          git pull --rebase origin main
+          git push origin HEAD:main
