@@ -66,8 +66,8 @@ assert.equal(statAuraPercentForCard(disease, auraProbe('Virus Test', 'Virus'), g
 assert.equal(statAuraPercentForCard(elohim, auraProbe('Rapture Test', 'Rapture'), galaxy), 300, 'Elohim Rapture boost cap')
 assert.equal(
   statAuraPercentForCard(satan, auraProbe('Blood Rain Test', 'Blood Rain'), galaxy),
-  226,
-  'Satan Galaxy must match the in-game +113% base and +226% Blood Rain boost.',
+  282.5,
+  'Satan Galaxy uses the real 2.5x Blood Rain mechanic even though the in-game card text displays +226%.',
 )
 
 const typhonDef = card('Typhon')
