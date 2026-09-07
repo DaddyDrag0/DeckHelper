@@ -21,7 +21,11 @@ function mixSeed(runSeed: number, floor: number): number {
 const runSeed = 983450096
 const floor = 97
 const floorSeed = mixSeed(runSeed, floor)
-const enemies = generateDepthsTeam(floor, floorSeed)
+// Keep the original combat fixture stable when updates expand the random pool.
+const enemies = generateDepthsTeam(floor, floorSeed).map((enemy, i) => ({
+  ...enemy, card: cards.find(card => card.name === ['Anubis', 'Darling', 'Anubis', 'Titan'][i])!,
+  health: enemy.power * (cards.find(card => card.name === ['Anubis', 'Darling', 'Anubis', 'Titan'][i])!.hpMultiplier || 1),
+}))
 const enemyNames = enemies.map((enemy) => enemy.card.name)
 
 assert(

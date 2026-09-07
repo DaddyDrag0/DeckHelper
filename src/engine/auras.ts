@@ -38,6 +38,7 @@ const BOOSTED_PACKS: Record<string, string> = {
   Shatbi: 'Egypt',
   Taoist: 'Immortal',
   Myths: 'Cryptid',
+  Gamer: 'Video Game',
   'Dinosaur King': 'Prehistoric',
 }
 
@@ -113,7 +114,8 @@ export function statAuraPercentForCard(
   if (aura.name === 'The One Ring') {
     return !card.definition.weather && !card.definition.boss ? base : 0
   }
-  return isStatAuraBoosted(aura, card) ? base * Number(aura.boostMult || 1) : base
+  const value = isStatAuraBoosted(aura, card) ? base * Number(aura.boostMult || 1) : base
+  return ['The Sequel', 'Myths', 'Gamer'].includes(aura.name) ? Math.min(300, value) : value
 }
 
 export function applyStatAura(

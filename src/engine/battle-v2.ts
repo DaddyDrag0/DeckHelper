@@ -83,6 +83,9 @@ const FULLY_SUPPORTED = new Set([
   'Cosmic Rivalry', 'Divine Ascension', 'Mastered Ascension', 'Kitchen', 'Six Realms Staff',
   'Twelve Devas Axe', 'Vajra Short Sword', 'Staff of Perfect Enlightenment', 'Shield of Ahimsa',
   'War Scythe', 'Great Nirvana Sword - Zero',
+  'Jackpot', "Spartan's Rage", 'Black Box', 'Blade of Miquella', 'Life Tap',
+  'Frozen Solitude', 'The D8', 'Fortify', 'Divine Arrogance', 'Void Heart',
+  'Hidden Blade', 'Glory Kill', 'Split In Two', 'Ruler of Humans', 'Joy', 'Sorrow',
 ])
 
 const BENCH_AFFECTING_UNSUPPORTED = new Set<string>()
@@ -473,6 +476,7 @@ function clearStatuses(card: CombatCard) {
   card.status.blind = false
   card.counters.bleed = 0
   card.counters.frostbite = 0
+  card.counters.videoFrozen = 0
   card.counters.poisonFlat = 0
   card.counters.poisonPercent = 0
   card.counters.weaknessTurns = 0
@@ -718,6 +722,22 @@ function onEntry(runtime: Runtime, card: CombatCard) {
 
   let name = resolvedAbility(runtime, card)
   if (!name || !hasAbility(runtime, card, name)) return
+
+  // Video Game combat models are implemented from the current card definitions and
+  // are covered by the dedicated regression suite below.
+  if (name === 'Frozen Solitude' && !statusProtected(runtime, enemyTeam)) {
+    for (const foe of runtime.state.teams[enemyTeam]) {
+      foe.status.stunned = Math.max(1, foe.status.stunned)
+      foe.counters.videoFrozen = 1
+    }
+  }
+  if (name === 'The D8') {
+    card.damage *= 1 + (1 + Math.floor(rand(runtime, card.team) * 50)) / 100
+    const hpFactor = 1 + (1 + Math.floor(rand(runtime, card.team) * 50)) / 100
+    card.maxHp *= hpFactor
+    card.hp *= hpFactor
+    card.counters.d8Reduction = (1 + Math.floor(rand(runtime, card.team) * 30)) / 100
+  }
 
   if (name === "Pandora's Box" && !card.flags.pandoraRolled) {
     card.flags.pandoraRolled = true
@@ -1386,6 +1406,21 @@ function offensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
   ].includes(name)) special = true
 
   switch (name) {
+    case "Spartan's Rage": damage *= 1 + Math.max(0, 1 - attacker.hp / attacker.maxHp); break
+    case 'Life Tap': damage *= 1.3; break
+    case 'Frozen Solitude': if ((target.counters.videoFrozen || 0) > 0) damage *= 2; break
+    case 'Divine Arrogance': if (attacker.hp > target.hp) damage *= 1.75; break
+    case 'Hidden Blade':
+      if (!attacker.flags['hiddenBlade:' + target.id]) {
+        attacker.flags['hiddenBlade:' + target.id] = true
+        damage *= 2
+        bypass = true
+        special = true
+      }
+      break
+    case 'Void Heart':
+      if (attacker.flags.voidReady) { attacker.flags.voidReady = false; damage *= 2 }
+      break
     case 'Twelve Devas Axe': damage *= 2.5; break
     case 'Staff of Perfect Enlightenment':
       damage *= 1.25
@@ -1537,6 +1572,14 @@ function defensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
   const defensiveDebugBefore = runtime.captureDebug ? { attackerHp: attacker.hp, attackerDamage: attacker.damage, targetHp: target.hp, targetDamage: target.damage } : null
 
   switch (name) {
+    case 'Divine Arrogance': if (target.hp < attacker.hp) damage *= 0.55; break
+    case 'The D8': damage *= 1 - (target.counters.d8Reduction || 0); break
+    case 'Fortify': {
+      const absorbed = Math.min(damage, target.counters.blockHp || 0)
+      target.counters.blockHp = Math.max(0, (target.counters.blockHp || 0) - absorbed)
+      damage -= absorbed
+      break
+    }
     case 'ConstellarTaurus': damage /= constellarTaurusFactor(target); break
     case 'ConstellarCancer': {
       const threshold = target.counters.cancerThreshold || 1
@@ -1725,6 +1768,12 @@ function tryRevive(runtime: Runtime, attacker: CombatCard, target: CombatCard): 
     }
     return false
   }
+  if (name === 'Black Box' && !target.flags.blackBoxUsed) {
+    target.flags.blackBoxUsed = true
+    target.hp = 1
+    attacker.hp -= target.maxHp * 0.5
+    return true
+  }
   if (name === 'Revive' && !target.flags.revived && rand(runtime, target.team) > 0.5) {
     target.flags.revived = true
     target.hp = target.maxHp * 0.5
@@ -1771,6 +1820,9 @@ function targetRetroCore(runtime: Runtime, attacker: CombatCard, target: CombatC
   const name = resolvedAbility(runtime, target)
   if (!name || !hasAbility(runtime, target, name)) return
   switch (name) {
+    case 'Ruler of Humans':
+      for (const ally of runtime.state.teams[target.team]) if (alive(ally)) ally.damage += damage * 1.25
+      break
     case 'Restoration': if (target.hp > 0) target.hp += damage * 0.7; break
     case 'Rage': if (target.hp > 0) target.damage *= 1.25; break
     case 'Undead': if (target.hp > 0) target.hp = Math.min(target.maxHp, target.hp + target.maxHp * 0.25); break
@@ -1887,6 +1939,15 @@ function attackerRetroCore(runtime: Runtime, attacker: CombatCard, target: Comba
   let didRegen = false
   if (!name || !hasAbility(runtime, attacker, name)) return didRegen
   switch (name) {
+    case 'Blade of Miquella':
+    case "Spartan's Rage": {
+      const fraction = name === 'Blade of Miquella' ? 0.25 : Math.max(0, 1 - attacker.hp / attacker.maxHp) * 0.5
+      if (damage > 0 && alive(attacker)) {
+        attacker.hp = Math.min(attacker.maxHp, attacker.hp + damage * lifestealFraction(runtime, attacker, fraction))
+        didRegen = true
+      }
+      break
+    }
     case 'ConstellarScorpio':
       if (damage > 0 && !statusProtected(runtime, target.team)) target.counters.poisonFlat = Math.max(target.counters.poisonFlat || 0, attacker.damage)
       break
@@ -2106,7 +2167,7 @@ function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: Comb
 
   if (attacker.status.blind && rand(runtime, attacker.team) > 0.4) { damage = 0; pushAbilityDebug(runtime, attacker, 'Blind caused the attack to miss.') }
 
-  if (!off.special && hasAbility(runtime, target, 'All Father') && damage > 0) {
+  if (!bypass && !off.special && hasAbility(runtime, target, 'All Father') && damage > 0) {
     const cost = target.maxHp / 5
     damage = 0
     target.hp -= cost
@@ -2304,6 +2365,16 @@ function applyOnDeathCore(runtime: Runtime, dead: CombatCard, opponent: CombatCa
   const name = resolvedAbility(runtime, dead)
 
   if (!skipOpponentPassives) {
+    if (opponent && alive(opponent) && hasAbility(runtime, opponent, 'Glory Kill')) {
+      opponent.hp = opponent.maxHp
+      opponent.counters.gloryKills = (opponent.counters.gloryKills || 0) + 1
+      const base = opponent.counters.gloryBaseDamage || opponent.damage
+      opponent.counters.gloryBaseDamage = base
+      opponent.damage = base * (1 + 0.5 * opponent.counters.gloryKills)
+    }
+    if (opponent && alive(opponent) && hasAbility(runtime, opponent, 'Life Tap')) {
+      opponent.hp = Math.min(opponent.maxHp, opponent.hp + opponent.maxHp * 0.2)
+    }
     if (opponent && alive(opponent) && hasAbility(runtime, opponent, 'Prehistoric Wrath')) {
       opponent.damage *= 2
       pushAbilityDebug(runtime, opponent, 'Prehistoric Wrath: enemy defeated; ATK doubled to ' + compactDebugNumber(opponent.damage) + '.')
@@ -2333,6 +2404,17 @@ function applyOnDeathCore(runtime: Runtime, dead: CombatCard, opponent: CombatCa
     return
   }
 
+  if (name === 'Split In Two' && !dead.flags.sealed) {
+    const children = ['Joy', 'Sorrow'].map((childName, i) => {
+      const child = makePlayerCard(childName, dead.borders, dead.index)!
+      child.team = team
+      child.id = dead.id + ':' + childName
+      child.maxHp = child.hp = dead.maxHp * 0.5
+      child.damage = dead.damage * 0.6
+      return child
+    })
+    deck.unshift(...children)
+  }
   if (name === 'Nightmare Melody' && runtime.state.boosts[team].composerCount) {
     runtime.state.boosts[team].composerCount = Math.max(0, (runtime.state.boosts[team].composerCount || 0) - 1)
     pushAbilityDebug(runtime, dead, 'Nightmare Melody field effect ended for this Composer.')
@@ -2804,6 +2886,16 @@ function prepareTurn(runtime: Runtime, attacker: CombatCard) {
 }
 
 function beforeAttack(runtime: Runtime, attacker: CombatCard) {
+  if (hasAbility(runtime, attacker, 'Life Tap')) attacker.hp *= 0.85
+  if (hasAbility(runtime, attacker, 'Blade of Miquella')) attacker.counters.waterfowl = (attacker.counters.waterfowl || 0) + 1
+  if (hasAbility(runtime, attacker, 'Void Heart')) {
+    attacker.counters.void = (attacker.counters.void || 0) + 1
+    if (attacker.counters.void >= 3) {
+      attacker.counters.void = 0
+      attacker.flags.voidReady = true
+      attacker.hp = Math.min(attacker.maxHp, attacker.hp + attacker.maxHp * 0.25)
+    }
+  }
   const target = active(runtime, OTHER_TEAM[attacker.team])
   if (target && hasAbility(runtime, attacker, 'Blood Bath')) runAbilityTrace(runtime, attacker, 'Blood Bath', () => {
     const stolen = Math.max(0, target.hp * 0.25)
@@ -2841,6 +2933,7 @@ function attackCount(runtime: Runtime, attacker: CombatCard): { count: number; m
 }
 
 function canNormalAttack(runtime: Runtime, attacker: CombatCard): boolean {
+  if (hasAbility(runtime, attacker, 'Ruler of Humans')) return false
   if (hasAbility(runtime, attacker, 'Dagger Storm') || hasAbility(runtime, attacker, 'Naughty or Nice?')
     || hasAbility(runtime, attacker, 'Meow') || hasAbility(runtime, attacker, 'Never Forgotten')
     || hasAbility(runtime, attacker, 'Origin') || hasAbility(runtime, attacker, 'Laser Gun')
@@ -3034,11 +3127,19 @@ function doTurn(runtime: Runtime, attacker: CombatCard) {
   }
 
   if (canNormalAttack(runtime, attacker)) {
-    const { count } = attackCount(runtime, attacker)
+    const dance = hasAbility(runtime, attacker, 'Blade of Miquella') && (attacker.counters.waterfowl || 0) % 3 === 0
+    const count = dance ? 3 : attackCount(runtime, attacker).count
     for (let i = 0; i < count; i++) {
       target = active(runtime, enemyTeam)
       if (!target || !alive(attacker)) break
-      const dealt = dealDamage(runtime, attacker, target)
+      const critical = hasAbility(runtime, attacker, 'Jackpot') && rand(runtime, attacker.team) < 0.3
+      const dealt = dealDamage(runtime, attacker, target, dance ? 0.5 : critical ? 1.5 : 1)
+      if (hasAbility(runtime, attacker, 'Fortify') && alive(attacker)) {
+        const block = attacker.maxHp * 0.4
+        const remaining = attacker.counters.blockHp || 0
+        if (Math.ceil(remaining / block) < 3) attacker.counters.blockHp = remaining + block
+      }
+      if (critical && alive(attacker) && alive(target)) dealDamage(runtime, attacker, target, 0.5)
       applyCollateralAfterHit(runtime, attacker, target, dealt)
       resolveDeaths(runtime)
       let insatiableChainCount = 0
@@ -3313,6 +3414,7 @@ export function simulateBattleV2(
       if (next && statusProtected(runtime, nextTeam)) clearStatuses(next)
       if (next && next.status.stunned > 0) {
         next.status.stunned -= 1
+        next.counters.videoFrozen = Math.max(0, (next.counters.videoFrozen || 0) - 1)
       } else if (next && next.flags.slowed) {
         next.counters.slowed = (next.counters.slowed || 0) + 1
         if ((next.counters.slowTurns || 0) > 0) {

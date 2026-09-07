@@ -47,6 +47,9 @@ export const SOURCE_ALIGNED_ABILITIES = new Set([
   'Laser Gun', 'Lotus Sutra', 'Origin', 'Outshine', 'Pandemic', 'Railgun',
   'Shiny Steal', 'Water Shield of Xuanwu', 'Constellar', "Pandora's Box",
   'Cosmic Rivalry', 'Divine Ascension', 'Kitchen', 'Six Realms Staff',
+  'Jackpot', "Spartan's Rage", 'Black Box', 'Blade of Miquella', 'Life Tap',
+  'Frozen Solitude', 'The D8', 'Fortify', 'Divine Arrogance', 'Void Heart',
+  'Hidden Blade', 'Glory Kill',
 ])
 
 export function getDepthsAbilityCoverage() {

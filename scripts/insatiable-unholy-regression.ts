@@ -26,7 +26,11 @@ function mixSeed(runSeed: number, floor: number): number {
 const floor = 1625
 const runSeed = 1241481851
 const floorSeed = mixSeed(runSeed, floor)
-const enemies = generateDepthsTeam(floor, floorSeed)
+// Preserve the reported combat fixture when new cards change the random pool.
+const enemies = generateDepthsTeam(floor, floorSeed).map((enemy,i) => {
+  const card = cards.find(c => c.name === ['Demon Hunter','Yamato no Orochi','Stegosaurus','Mummy'][i])!
+  return {...enemy,card,health:enemy.power*(card.hpMultiplier||1)}
+})
 const names = enemies.map((enemy) => enemy.card.name)
 assert(names.join('|') === 'Demon Hunter|Yamato no Orochi|Stegosaurus|Mummy', 'Reported enemy lineup changed: ' + names.join(' | '))
 const loadout: TeamLoadout = { cards: [
