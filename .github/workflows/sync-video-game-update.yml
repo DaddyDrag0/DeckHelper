@@ -1,0 +1,68 @@
+name: Sync Video Game update
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-video-game-update.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Sync tested Depths combat data and engine
+        env:
+          DEPTHS_SHA: 188bae5dfe02927b671d869e4ac7f2072f57aacb
+        run: |
+          set -euo pipefail
+          base="https://raw.githubusercontent.com/DaddyDrag0/CardRngExpansionDepths/${DEPTHS_SHA}"
+          files=(
+            src/data/abilities-4.json
+            src/data/auras-2.json
+            src/data/cards-7.json
+            src/data/thumbnails.json
+            src/engine/auras.ts
+            src/engine/battle-v2.ts
+            src/engine/support.ts
+            scripts/announcement-balance-regression.ts
+            scripts/insatiable-unholy-regression.ts
+            scripts/stall-regression.ts
+            scripts/video-game-update-regression.ts
+          )
+          for file in "${files[@]}"; do
+            mkdir -p "$(dirname "$file")"
+            curl -fsSL "$base/$file" -o "$file"
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('package.json')
+          data=json.loads(p.read_text())
+          cmd=data['scripts']['test:engine']
+          vg='tsx scripts/video-game-update-regression.ts'
+          if vg not in cmd:
+              data['scripts']['test:engine']=cmd+' && '+vg
+          p.write_text(json.dumps(data, indent=2)+"\n")
+          Path('version.json').write_text('2026-09-07-video-game-1\n')
+          PY
+      - run: npm ci
+      - run: npm run check
+      - name: Publish DeckHelper update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/sync-video-game-update.yml
+          git add -A
+          git commit -m "Sync Video Game cards and combat support"
+          git pull --rebase origin main
+          git push origin HEAD:main
