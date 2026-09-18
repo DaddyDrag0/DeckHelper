@@ -1,5 +1,6 @@
 export type BorderName = 'Platinum' | 'Crystal' | 'Ruby' | 'Galaxy'
 export type AuraBorderName = 'Platinum' | 'Crystal' | 'Galaxy'
+export type MutationWeather = 'Storm' | 'Snow' | 'Aurora' | 'Shroud' | 'Meteor Shower' | 'Time Storm' | 'Eclipse' | 'Virus' | 'Blood Rain' | 'Armageddon' | 'Manga'
 export type BattleTeam = 'Allies' | 'Enemies'
 
 export interface CardDefinition {
@@ -33,6 +34,7 @@ export interface AuraDefinition {
 export interface TeamCard {
   cardName: string
   borders: BorderName[]
+  mutationWeather?: MutationWeather | null
 }
 
 export interface AuraSelection {
@@ -59,6 +61,7 @@ export interface CombatCard {
   team: BattleTeam
   index: number
   borders: BorderName[]
+  mutationWeather?: MutationWeather | null
   power: number
   hp: number
   maxHp: number
