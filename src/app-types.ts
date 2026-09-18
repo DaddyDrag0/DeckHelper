@@ -1,4 +1,4 @@
-import type { AuraBorderName, AuraSelection, BorderName, TeamLoadout } from './types'
+import type { AuraBorderName, AuraSelection, BorderName, MutationWeather, TeamLoadout } from './types'
 
 export type DeckSlot = 0 | 1 | 2 | 3
 export type SearchMode = 'fast' | 'full'
@@ -8,6 +8,7 @@ export interface OwnedCard {
   cardName: string
   quantity: number
   borders: BorderName[]
+  mutationWeather?: MutationWeather | null
   locked: boolean
   lockedPosition: DeckSlot | null
 }
@@ -63,6 +64,7 @@ export interface RankedTeam {
 export interface ReplacementResult {
   cardName: string
   borders: BorderName[]
+  mutationWeather?: MutationWeather | null
   loadout: TeamLoadout
   metrics: TeamMetrics
   medianDelta: number
