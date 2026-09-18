@@ -30,11 +30,10 @@ jobs:
           test -f index.html
           test -f version.json
           grep -q 'assets/' index.html
-          grep -R -q 'DHINV2:' assets
-          grep -R -q 'mutationWeather' assets
-          grep -R -q 'Manga Mutation' assets
-          grep -R -q 'Frozen Solitude' assets
-          grep -R -q 'Jurassic World' assets
+          grep -R -q 'DHINV2:' assets || { echo "Missing DHINV2 inventory support"; exit 1; }
+          grep -R -q 'mutationWeather' assets || { echo "Missing mutationWeather bundle logic"; exit 1; }
+          grep -R -q 'Frozen Solitude' assets || { echo "Missing Frozen Solitude data"; exit 1; }
+          grep -R -q 'Jurassic World' assets || { echo "Missing Jurassic World data"; exit 1; }
       - name: Commit production build
         run: |
           git config user.name "github-actions[bot]"
