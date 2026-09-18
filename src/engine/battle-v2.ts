@@ -436,6 +436,12 @@ function luminescentVeilCanAffect(attacker: CombatCard): boolean {
   return name !== 'Kira' && name !== 'Judgment Day'
 }
 
+// Judgment Day cannot receive shields, blocks, lethal dodges, redirects, or other
+// teammate-granted protection.
+function canReceiveExternalProtection(card: CombatCard): boolean {
+  return (effectiveCardName(card) || card.definition.name) !== 'Judgment Day'
+}
+
 function clearSkillAura(runtime: Runtime, team: BattleTeam) {
   const boosts = runtime.state.boosts[team]
   runtime.state.boosts[team] = {
@@ -482,21 +488,22 @@ function clearStatuses(card: CombatCard) {
   card.counters.weaknessTurns = 0
 }
 
-function makePlayerCard(name: string, borders: CombatCard['borders'], index: number): CombatCard | null {
+function makePlayerCard(name: string, borders: CombatCard['borders'], index: number, mutationWeather?: CombatCard['mutationWeather']): CombatCard | null {
   const card = definition(name)
   if (!card) return null
-  const power = getPower(card, borders)
-  const hp = getHealth(card, borders)
+  const power = getPower(card, borders, mutationWeather)
+  const hp = getHealth(card, borders, mutationWeather)
   return {
     id: `Allies:${index}:${name}`,
     definition: card,
     team: 'Allies',
     index,
     borders: [...borders],
+    mutationWeather: mutationWeather || null,
     power,
     hp,
     maxHp: hp,
-    damage: getAttack(card, borders),
+    damage: getAttack(card, borders, mutationWeather),
     entered: false,
     dead: false,
     boss: Boolean(card.boss),
@@ -634,7 +641,7 @@ function applyDraconianSetup(team: CombatCard[]) {
 
 export function createBattleStateV2(loadout: TeamLoadout, enemies: DepthsEnemy[]): BattleState {
   const allies = loadout.cards
-    .map((slot, index) => makePlayerCard(slot.cardName, slot.borders, index + 1))
+    .map((slot, index) => makePlayerCard(slot.cardName, slot.borders, index + 1, slot.mutationWeather))
     .filter((card): card is CombatCard => Boolean(card))
   const enemyCards = enemies.map((enemy, index) => makeEnemyCard(enemy, index + 1))
 
@@ -725,12 +732,6 @@ function onEntry(runtime: Runtime, card: CombatCard) {
 
   // Video Game combat models are implemented from the current card definitions and
   // are covered by the dedicated regression suite below.
-  if (name === 'Frozen Solitude' && !statusProtected(runtime, enemyTeam)) {
-    for (const foe of runtime.state.teams[enemyTeam]) {
-      foe.status.stunned = Math.max(1, foe.status.stunned)
-      foe.counters.videoFrozen = 1
-    }
-  }
   if (name === 'The D8') {
     card.damage *= 1 + (1 + Math.floor(rand(runtime, card.team) * 50)) / 100
     const hpFactor = 1 + (1 + Math.floor(rand(runtime, card.team) * 50)) / 100
@@ -1237,9 +1238,9 @@ function onEntry(runtime: Runtime, card: CombatCard) {
       const deck = runtime.state.teams[card.team]
       const behind = deck[1]
       if (behind && behind !== card) {
-        card.damage += behind.damage
-        card.maxHp += behind.maxHp
-        card.hp += Math.max(0, behind.hp)
+        card.damage += behind.damage * 0.75
+        card.maxHp += behind.maxHp * 0.75
+        card.hp += Math.max(0, behind.hp) * 0.75
         deck.splice(1, 1)
         behind.dead = true
       }
@@ -1351,10 +1352,11 @@ function onEntry(runtime: Runtime, card: CombatCard) {
       if (name === 'Heart Hunter' && active(runtime, enemyTeam)) active(runtime, enemyTeam)!.counters.bleed = 100
       break
     case 'Sacred Judgment': {
+      // Sacred Judgment must finish the snapshotted AoE even if Seraphim dies mid-cast.
       const targets = [...runtime.state.teams[enemyTeam]]
       for (const target of targets) {
-        if (!alive(card) || !alive(target)) continue
-        dealDamage(runtime, card, target)
+        if (!alive(target)) continue
+        dealDamage(runtime, card, target, 0.25)
         resolveDeaths(runtime)
       }
       break
@@ -1461,7 +1463,14 @@ function offensive(runtime: Runtime, attacker: CombatCard, target: CombatCard, i
       break
     case 'Judgment': damage += (attacker.maxHp - attacker.hp) * 0.7; break
     case 'Armageddon': {
+      if (attacker.flags.suppressArmageddonOnce) {
+        attacker.flags.suppressArmageddonOnce = false
+        attacker.flags.armageddonLethalThisHit = false
+        pushAbilityDebug(runtime, attacker, 'Overcharge follow-up used 50% of Judgment Day card damage; Armageddon did not carry into the next enemy.')
+        break
+      }
       const success = rand(runtime, attacker.team) > 0.5
+      attacker.flags.armageddonLethalThisHit = success
       if (success) damage = Number.POSITIVE_INFINITY
       pushAbilityDebug(runtime, attacker, `Armageddon ${success ? 'succeeded — this hit became lethal' : 'failed — normal attack damage only'}.`)
       break
@@ -2113,6 +2122,7 @@ function attackerRetro(runtime: Runtime, attacker: CombatCard, target: CombatCar
 }
 
 function resolveAuraFarm(runtime: Runtime, target: CombatCard, incoming: number): { target: CombatCard; damage: number } {
+  if (!canReceiveExternalProtection(target)) return { target, damage: incoming }
   if (incoming < target.hp) return { target, damage: incoming }
   const deck = runtime.state.teams[target.team]
   // Aura Farm only protects the active card directly ahead of Piccolo.
@@ -2140,6 +2150,7 @@ function resolveAuraFarm(runtime: Runtime, target: CombatCard, incoming: number)
 }
 
 function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: CombatCard, mult = 1, bypass = false): number {
+  attacker.flags.armageddonLethalThisHit = false
   let target = originalTarget
   const confused = attacker.status.confused > 0 || attacker.flags.eternalConfusion
   const confusionSelfHit = confused && runtime.rng.next() < 0.5
@@ -2182,12 +2193,19 @@ function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: Comb
 
   target.flags.evadedThisHit = false
   const beforeDefense = damage
-  if (!bypass && target.flags.eternalDevotion) {
+  const externalProtectionAllowed = canReceiveExternalProtection(target)
+  if (!externalProtectionAllowed) {
+    target.flags.eternalDevotion = false
+    target.flags.dodgeLethal = false
+    target.status.shield = 0
+    target.counters.hpShield = 0
+  }
+  if (!bypass && externalProtectionAllowed && target.flags.eternalDevotion) {
     target.flags.eternalDevotion = false
     damage = 0
     pushAbilityDebug(runtime, target, `Eternal Devotion blocked the incoming attack from ${effectiveCardName(attacker) || attacker.definition.name}.`)
   }
-  else if (!bypass && target.flags.dodgeLethal) {
+  else if (!bypass && externalProtectionAllowed && target.flags.dodgeLethal) {
     target.flags.dodgeLethal = false
     damage = 0
     pushAbilityDebug(runtime, target, `Destiny Sight dodged the incoming lethal attack from ${effectiveCardName(attacker) || attacker.definition.name}.`)
@@ -2195,7 +2213,7 @@ function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: Comb
   else if (!bypass) {
     const veilHolder = luminescentVeilHolder(runtime, target.team)
     const successfulEvades = target.counters.luminescentEvades || 0
-    if (veilHolder && luminescentVeilCanAffect(attacker) && successfulEvades < 2) {
+    if (externalProtectionAllowed && veilHolder && luminescentVeilCanAffect(attacker) && successfulEvades < 2) {
       const chance = Math.max(0.2, 0.4 - successfulEvades * 0.1)
       if (rand(runtime, target.team) < chance) {
         target.counters.luminescentEvades = successfulEvades + 1
@@ -2222,18 +2240,18 @@ function dealDamage(runtime: Runtime, attacker: CombatCard, originalTarget: Comb
   if (threshold && target.definition.weather === 'Time Storm') threshold *= 1.5
   if (threshold && damage < target.maxHp * threshold / 100) damage = 0
 
-  if (target.status.shield > 0 && damage > 0) { const beforeShield = target.status.shield; target.status.shield -= 1; damage = 0; pushAbilityDebug(runtime, target, 'Shield blocked the attack; shields ' + beforeShield + ' → ' + target.status.shield + '.') }
+  if (externalProtectionAllowed && target.status.shield > 0 && damage > 0) { const beforeShield = target.status.shield; target.status.shield -= 1; damage = 0; pushAbilityDebug(runtime, target, 'Shield blocked the attack; shields ' + beforeShield + ' → ' + target.status.shield + '.') }
   if (damage < 0) damage = Math.max(-(target.maxHp - target.hp), damage)
   damage = Number.isFinite(damage) ? Math.ceil(damage) : target.hp
 
-  if ((target.counters.hpShield || 0) > 0 && damage > 0) {
+  if (externalProtectionAllowed && (target.counters.hpShield || 0) > 0 && damage > 0) {
     const absorbed = Math.min(target.counters.hpShield, damage)
     target.counters.hpShield -= absorbed
     damage -= absorbed
     pushAbilityDebug(runtime, target, 'ConstellarVirgo HP shield absorbed ' + compactDebugNumber(absorbed) + ' damage; ' + compactDebugNumber(target.counters.hpShield) + ' shield remains.')
   }
 
-  const xuanwu = damage > 0 ? waterShield(runtime, target.team, target) : undefined
+  const xuanwu = damage > 0 && externalProtectionAllowed ? waterShield(runtime, target.team, target) : undefined
   if (xuanwu) {
     const redirected = Math.ceil(damage * 0.5)
     damage -= redirected
@@ -2472,12 +2490,12 @@ function applyOnDeathCore(runtime: Runtime, dead: CombatCard, opponent: CombatCa
     next.maxHp += dead.maxHp * 0.5
     next.hp += dead.maxHp * 0.5
   }
-  if (name === 'Destiny Sight') {
+  if (name === 'Destiny Sight' && canReceiveExternalProtection(next)) {
     next.flags.dodgeLethal = true
     pushAbilityDebug(runtime, dead, `Destiny Sight passed a lethal dodge to ${effectiveCardName(next) || next.definition.name}.`)
   }
   if (name === "Housewife's Blessing") { boostStats(next, 2); next.status.stunned = 2 }
-  if (name === 'Eternal Devotion') {
+  if (name === 'Eternal Devotion' && canReceiveExternalProtection(next)) {
     next.flags.eternalDevotion = true
     pushAbilityDebug(runtime, dead, `Eternal Devotion gave ${effectiveCardName(next) || next.definition.name} a one-attack shield after death.`)
   }
@@ -2485,7 +2503,7 @@ function applyOnDeathCore(runtime: Runtime, dead: CombatCard, opponent: CombatCa
     next.damage += dead.damage * 0.25
     next.maxHp += dead.maxHp * 0.25
     next.hp += dead.maxHp * 0.25
-    next.status.shield += 1
+    if (canReceiveExternalProtection(next)) next.status.shield += 1
   }
 }
 
@@ -3134,6 +3152,7 @@ function doTurn(runtime: Runtime, attacker: CombatCard) {
       if (!target || !alive(attacker)) break
       const critical = hasAbility(runtime, attacker, 'Jackpot') && rand(runtime, attacker.team) < 0.3
       const dealt = dealDamage(runtime, attacker, target, dance ? 0.5 : critical ? 1.5 : 1)
+      const armageddonLethal = Boolean(attacker.flags.armageddonLethalThisHit)
       if (hasAbility(runtime, attacker, 'Fortify') && alive(attacker)) {
         const block = attacker.maxHp * 0.4
         const remaining = attacker.counters.blockHp || 0
@@ -3167,10 +3186,12 @@ function doTurn(runtime: Runtime, attacker: CombatCard) {
 
       const stormSpirit = runtime.state.boosts[attacker.team].stormSpirit
       const stormTarget = active(runtime, enemyTeam)
-      // Live behavior: Overcharge does not roll onto the next enemy when the
-      // primary attack killed the card it originally struck.
-      if (stormSpirit && stormTarget && alive(attacker) && alive(target) && runtime.rng.next() * 100 < stormSpirit) {
+      // Judgment Day may still Overcharge after an Armageddon kill, but the lethal/infinite
+      // result does NOT transfer. The follow-up into the next enemy is exactly 50% of JD's
+      // normal card damage, so Armageddon is suppressed for that one follow-up hit.
+      if (stormSpirit && stormTarget && alive(attacker) && (alive(target) || armageddonLethal) && runtime.rng.next() * 100 < stormSpirit) {
         pushAbilityDebug(runtime, attacker, 'Storm Spirit triggered — immediately attacking again at 50% damage.')
+        if (armageddonLethal && !alive(target)) attacker.flags.suppressArmageddonOnce = true
         const stormDamage = dealDamage(runtime, attacker, stormTarget, 0.5)
         applyCollateralAfterHit(runtime, attacker, stormTarget, stormDamage)
         resolveDeaths(runtime)
@@ -3412,9 +3433,26 @@ export function simulateBattleV2(
       const nextTeam = OTHER_TEAM[state.moving]
       const next = active(runtime, nextTeam)
       if (next && statusProtected(runtime, nextTeam)) clearStatuses(next)
-      if (next && next.status.stunned > 0) {
+
+      // Frozen Solitude now freezes each opposing card exactly when that card would
+      // take its first turn, and only while the Frozen Solitude user is still active.
+      // Keep the frozen marker through the source card's follow-up turn so its
+      // +100% damage against Frozen enemies can actually apply.
+      const frozenSource = active(runtime, state.moving)
+      const canFirstTurnFreeze = next
+        && !next.flags.frozenSolitudeFirstTurnUsed
+        && frozenSource
+        && hasAbility(runtime, frozenSource, 'Frozen Solitude')
+      if (next && !next.flags.frozenSolitudeFirstTurnUsed) next.flags.frozenSolitudeFirstTurnUsed = true
+
+      if (canFirstTurnFreeze && !statusProtected(runtime, nextTeam)) {
+        next.counters.videoFrozen = 1
+        pushAbilityDebug(runtime, frozenSource!, `Frozen Solitude froze ${effectiveCardName(next) || next.definition.name} on its first turn.`)
+      } else if (next && (next.counters.videoFrozen || 0) > 0) {
+        next.counters.videoFrozen = 0
+        state.moving = nextTeam
+      } else if (next && next.status.stunned > 0) {
         next.status.stunned -= 1
-        next.counters.videoFrozen = Math.max(0, (next.counters.videoFrozen || 0) - 1)
       } else if (next && next.flags.slowed) {
         next.counters.slowed = (next.counters.slowed || 0) + 1
         if ((next.counters.slowTurns || 0) > 0) {
