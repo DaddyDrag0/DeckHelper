@@ -1,0 +1,41 @@
+name: Publish audited DeckHelper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-audited-deckhelper.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - name: Build live site
+        run: npm run build
+      - name: Replace live bundle
+        run: |
+          rm -rf assets
+          cp -R dist/assets ./assets
+          cp dist/index.html ./index.html
+          cp dist/version.json ./version.json
+          rm -f .github/workflows/publish-audited-deckhelper.yml
+      - name: Publish audited build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Publish audited Weather Mutation DeckHelper build"
+          git pull --rebase origin main
+          git push origin HEAD:main
