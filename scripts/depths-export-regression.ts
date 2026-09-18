@@ -6,7 +6,7 @@ const loadout: TeamLoadout = {
   cards: [
     { cardName: 'Lilith The Enchantress', borders: ['Platinum', 'Crystal'] },
     { cardName: 'The Jade Emperor', borders: ['Platinum', 'Crystal'] },
-    { cardName: "Heaven's Armor", borders: ['Platinum', 'Ruby'] },
+    { cardName: "Heaven's Armor", borders: ['Platinum', 'Ruby'], mutationWeather: 'Manga' },
     { cardName: "Terra's Aria", borders: ['Platinum', 'Crystal'] },
   ],
   statAura: { auraName: 'Elohim', border: 'Crystal' },
@@ -18,8 +18,8 @@ assert.ok(code.startsWith('CRE1-'), 'Depths export must use the calculator CRE1 
 let raw = code.slice(5).replace(/-/g, '+').replace(/_/g, '/')
 while (raw.length % 4) raw += '='
 const payload = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'))
-assert.equal(payload.v, 1)
-assert.deepEqual(payload.c, loadout.cards.map((card) => [card.cardName, card.borders]))
+assert.equal(payload.v, 2)
+assert.deepEqual(payload.c, loadout.cards.map((card) => [card.cardName, card.borders, card.mutationWeather || '']))
 assert.deepEqual(payload.s, ['Elohim', 'Crystal'])
 assert.deepEqual(payload.a, ['Berserker', 'Galaxy'])
 console.log('Depths export CRE1 regression passed')

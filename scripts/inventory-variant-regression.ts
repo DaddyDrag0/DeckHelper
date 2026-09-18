@@ -9,8 +9,8 @@ assert.equal(usable.length, 3, 'Expected three usable cards')
 
 const inventory: InventoryState = {
   cards: [
-    { cardName: usable[0].name, quantity: 1, borders: ['Platinum', 'Crystal'], locked: true, lockedPosition: 0 },
-    { cardName: usable[0].name, quantity: 1, borders: ['Galaxy'], locked: true, lockedPosition: 1 },
+    { cardName: usable[0].name, quantity: 1, borders: ['Platinum'], mutationWeather: null, locked: true, lockedPosition: 0 },
+    { cardName: usable[0].name, quantity: 1, borders: ['Platinum'], mutationWeather: 'Manga', locked: true, lockedPosition: 1 },
     { cardName: usable[1].name, quantity: 1, borders: [], locked: true, lockedPosition: 2 },
     { cardName: usable[2].name, quantity: 1, borders: [], locked: true, lockedPosition: 3 },
   ],
@@ -30,10 +30,12 @@ const results = await searchBestTeams(inventory, {
 assert.ok(results.length, 'Expected a result for the fully locked deck')
 const team = results[0].loadout.cards
 assert.equal(team[0].cardName, usable[0].name)
-assert.equal(borderKey(team[0].borders), 'Platinum+Crystal')
+assert.equal(borderKey(team[0].borders), 'Platinum')
+assert.equal(team[0].mutationWeather ?? null, null)
 assert.equal(team[1].cardName, usable[0].name)
-assert.equal(borderKey(team[1].borders), 'Galaxy')
+assert.equal(borderKey(team[1].borders), 'Platinum')
+assert.equal(team[1].mutationWeather, 'Manga')
 assert.equal(team[2].cardName, usable[1].name)
 assert.equal(team[3].cardName, usable[2].name)
 
-console.log('Optimizer preserved two exact variants of the same card name in one team.')
+console.log('Optimizer preserved base and mutated variants of the same card name in one team.')

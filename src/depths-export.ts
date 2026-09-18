@@ -10,8 +10,8 @@ function toBase64Url(text: string): string {
 export function encodeDepthsTeam(loadout: TeamLoadout): string {
   if (loadout.cards.length !== 4) throw new Error('Depths export requires exactly 4 cards.')
   const payload = {
-    v: 1,
-    c: loadout.cards.map((slot) => [slot.cardName, [...slot.borders]]),
+    v: 2,
+    c: loadout.cards.map((slot) => [slot.cardName, [...slot.borders], slot.mutationWeather || '']),
     s: [loadout.statAura?.auraName || '', loadout.statAura?.border || ''],
     a: [loadout.abilityAura?.auraName || '', loadout.abilityAura?.border || ''],
   }

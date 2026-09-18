@@ -86,7 +86,7 @@ function abilityAuraOptions(inventory: InventoryState): Array<AuraSelection | nu
 }
 
 function rankedId(loadout: TeamLoadout): string {
-  const cardsKey = loadout.cards.map((card) => `${card.cardName}:${card.borders.join('+')}`).join('|')
+  const cardsKey = loadout.cards.map((card) => `${card.cardName}:${card.borders.join('+')}:${card.mutationWeather || ''}`).join('|')
   const stat = loadout.statAura ? `${loadout.statAura.auraName}:${loadout.statAura.border || 'Base'}` : '-'
   const ability = abilityAuraKey(loadout.abilityAura)
   return `${cardsKey}::${stat}::${ability}`

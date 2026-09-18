@@ -65,7 +65,7 @@ export class DeckHelperApp {
   }
 
   private syncCurrentDeck() {
-    const owned = new Map(this.state.inventory.cards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
+    const owned = new Map(this.state.inventory.cards.map((card) => [cardVariantKey(card.cardName, card.borders, card.mutationWeather), card] as const))
     const used = new Map<string, number>()
     this.state.currentDeck.cards = this.state.currentDeck.cards.slice(0, 4).flatMap((slot) => {
       const key = teamCardVariantKey(slot)
@@ -73,7 +73,7 @@ export class DeckHelperApp {
       const count = used.get(key) ?? 0
       if (!card || count >= card.quantity) return []
       used.set(key, count + 1)
-      return [{ cardName: card.cardName, borders: canonicalBorders(card.borders) }]
+      return [{ cardName: card.cardName, borders: canonicalBorders(card.borders), mutationWeather: card.mutationWeather ?? null }]
     })
     if (!this.auraSelectionOwned(this.state.currentDeck.statAura, this.state.inventory.statAuras)) this.state.currentDeck.statAura = null
     if (!this.auraSelectionOwned(this.state.currentDeck.abilityAura, this.state.inventory.abilityAuras)) this.state.currentDeck.abilityAura = null
@@ -169,7 +169,7 @@ export class DeckHelperApp {
         <summary>Inventory Code <span>backup / transfer</span></summary>
         <div class="inventory-code-body">
           <p>Copy this code somewhere safe, or paste a saved code below. Loading replaces Your Inventory only; saved decks are kept.</p>
-          <textarea id="inventory-code-input" spellcheck="false" placeholder="DHINV1:...">${escapeHtml(this.inventoryCodeText)}</textarea>
+          <textarea id="inventory-code-input" spellcheck="false" placeholder="DHINV2:...">${escapeHtml(this.inventoryCodeText)}</textarea>
           <div class="inventory-code-actions">
             <button class="primary" data-action="inventory-code-export">Copy Current Inventory</button>
             <button data-action="inventory-code-load" ${this.inventoryCodeText.trim() ? '' : 'disabled'}>Load Code</button>
@@ -187,7 +187,7 @@ export class DeckHelperApp {
 
   private renderInventoryCard(owned: OwnedCard) {
     const definition = cards.find((card) => card.name === owned.cardName)
-    const encodedKey = encodeURIComponent(cardVariantKey(owned.cardName, owned.borders))
+    const encodedKey = encodeURIComponent(cardVariantKey(owned.cardName, owned.borders, owned.mutationWeather))
     return `
       <article class="owned-variant-card" draggable="true" data-drag-card="${escapeHtml(encodedKey)}" data-drag-origin="inventory">
         <div class="owned-card-top">
@@ -244,7 +244,7 @@ export class DeckHelperApp {
   private renderPoolCard(card: (typeof cards)[number]) {
     const borders = this.poolBordersFor(card.name)
     const key = cardVariantKey(card.name, borders)
-    const owned = this.state.inventory.cards.find((entry) => cardVariantKey(entry.cardName, entry.borders) === key)
+    const owned = this.state.inventory.cards.find((entry) => cardVariantKey(entry.cardName, entry.borders, entry.mutationWeather) === key)
     const effectiveRarity = card.rarity * this.borderRarityMultiplier(borders)
     return `
       <article class="pool-catalog-card" draggable="true" data-drag-origin="pool" data-drag-card="${escapeHtml(this.poolPayload(card.name))}">
@@ -667,7 +667,7 @@ export class DeckHelperApp {
 
   private findOwnedCard(encodedKey: string) {
     const key = this.decodeCardKey(encodedKey)
-    return this.state.inventory.cards.find((entry) => cardVariantKey(entry.cardName, entry.borders) === key)
+    return this.state.inventory.cards.find((entry) => cardVariantKey(entry.cardName, entry.borders, entry.mutationWeather) === key)
   }
 
   private addCard(name: string) {
@@ -685,7 +685,7 @@ export class DeckHelperApp {
 
   private removeCard(encodedKey: string) {
     const key = this.decodeCardKey(encodedKey)
-    this.state.inventory.cards = this.state.inventory.cards.filter((card) => cardVariantKey(card.cardName, card.borders) !== key)
+    this.state.inventory.cards = this.state.inventory.cards.filter((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather) !== key)
     this.state.currentDeck.cards = this.state.currentDeck.cards.filter((card) => teamCardVariantKey(card) !== key)
     this.persist(); this.render()
   }
@@ -693,10 +693,10 @@ export class DeckHelperApp {
   private toggleCardBorder(encodedKey: string, border: BorderName, checked: boolean) {
     const card = this.findOwnedCard(encodedKey)
     if (!card || !CARD_BORDERS.includes(border)) return
-    const oldKey = cardVariantKey(card.cardName, card.borders)
+    const oldKey = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
     const nextBorders = canonicalBorders(checked ? [...card.borders, border] : card.borders.filter((value) => value !== border))
-    const nextKey = cardVariantKey(card.cardName, nextBorders)
-    const duplicate = this.state.inventory.cards.find((entry) => entry !== card && cardVariantKey(entry.cardName, entry.borders) === nextKey)
+    const nextKey = cardVariantKey(card.cardName, nextBorders, card.mutationWeather)
+    const duplicate = this.state.inventory.cards.find((entry) => entry !== card && cardVariantKey(entry.cardName, entry.borders, entry.mutationWeather) === nextKey)
     if (duplicate) {
       if (duplicate.lockedPosition !== null && card.lockedPosition !== null && duplicate.lockedPosition !== card.lockedPosition) {
         this.error = 'Those two variants have different locked positions. Clear one position lock before merging them.'
@@ -708,7 +708,7 @@ export class DeckHelperApp {
       duplicate.lockedPosition = duplicate.lockedPosition ?? card.lockedPosition
       this.state.inventory.cards = this.state.inventory.cards.filter((entry) => entry !== card)
     } else card.borders = nextBorders
-    const remap = (slot: TeamCard): TeamCard => teamCardVariantKey(slot) === oldKey ? { cardName: card.cardName, borders: canonicalBorders(nextBorders) } : slot
+    const remap = (slot: TeamCard): TeamCard => teamCardVariantKey(slot) === oldKey ? { cardName: card.cardName, borders: canonicalBorders(nextBorders), mutationWeather: card.mutationWeather ?? null } : slot
     this.state.currentDeck.cards = this.state.currentDeck.cards.map(remap)
     this.persist(); this.render()
   }
@@ -782,7 +782,7 @@ export class DeckHelperApp {
     if (!encodedKey) next.splice(slot, 1)
     else {
       const key = this.decodeCardKey(encodedKey)
-      const owned = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders) === key)
+      const owned = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather) === key)
       if (!owned) return
       const usedElsewhere = next.filter((_, index) => index !== slot).filter((card) => teamCardVariantKey(card) === key).length
       if (usedElsewhere >= owned.quantity) return
@@ -810,7 +810,7 @@ export class DeckHelperApp {
     if (!definition || (definition.unobtainable && !definition.name.toLowerCase().includes('conqueror'))) return
     const normalized = canonicalBorders(borders)
     const key = cardVariantKey(cardName, normalized)
-    const existing = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders) === key)
+    const existing = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather) === key)
     if (existing) existing.quantity = Math.min(999, existing.quantity + 1)
     else this.state.inventory.cards.push({ cardName, quantity: 1, borders: normalized, locked: false, lockedPosition: null })
     this.error = ''

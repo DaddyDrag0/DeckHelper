@@ -1,0 +1,46 @@
+name: Publish Weather Mutation update to DeckHelper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-weather-mutation.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate source and regressions
+        run: npm run check
+      - name: Publish built site into Pages root
+        run: |
+          rm -rf assets card-images aura-images
+          cp -a dist/. .
+          test -f index.html
+          test -f version.json
+          grep -q 'assets/' index.html
+          grep -R -q 'DHINV2:' assets
+          grep -R -q 'mutationWeather' assets
+          grep -R -q 'Manga Mutation' assets
+          grep -R -q 'Frozen Solitude' assets
+          grep -R -q 'Jurassic World' assets
+      - name: Commit production build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/publish-weather-mutation.yml
+          git add -A
+          git commit -m "Publish Weather Mutation update to DeckHelper live site"
+          git pull --rebase origin main
+          git push origin HEAD:main

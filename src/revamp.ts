@@ -12,10 +12,12 @@ import type {
   RankedTeam,
   WorkerOutbound,
 } from './app-types'
-import type { AuraBorderName, AuraSelection, BorderName, TeamLoadout } from './types'
+import type { AuraBorderName, AuraSelection, BorderName, MutationWeather, TeamLoadout } from './types'
 import { exportInventoryCode, importInventoryCode, loadState, makeFavorite, saveState } from './storage'
 import { auraLabel, borderLabel, deckLabel, escapeHtml, formatCompact, formatNumber, thumbnail } from './ui/format'
-import { cardVariantKey, canonicalBorders, teamCardVariantKey } from './card-variants'
+import { cardVariantKey, cardVariantLabel, canonicalBorders, teamCardVariantKey } from './card-variants'
+import { MUTATION_WEATHERS, mutationEligibleCard, normalizeMutationWeather } from './mutations'
+import { WEATHER_MUTATION_STAT_MULTIPLIERS } from './engine/stats'
 import { encodeDepthsTeam } from './depths-export'
 import { depthSelectableAuras, depthSelectableCards } from './selectable'
 import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
@@ -50,6 +52,7 @@ export class DeckHelperRevamp {
   private inventoryCodeText = ''
   private inventoryCodeStatus = ''
   private catalogBorders = new Map<string, BorderName[]>()
+  private catalogMutations = new Map<string, MutationWeather | null>()
   private worker: Worker | null = null
   private progress: OptimizerProgress | null = null
   private results: RankedTeam[] = []
@@ -74,7 +77,7 @@ export class DeckHelperRevamp {
   }
 
   private sanitizeCurrentDeck() {
-    const owned = new Map(this.state.inventory.cards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
+    const owned = new Map(this.state.inventory.cards.map((card) => [cardVariantKey(card.cardName, card.borders, card.mutationWeather), card] as const))
     const used = new Map<string, number>()
     this.state.currentDeck.cards = this.state.currentDeck.cards.slice(0, 4).flatMap((slot) => {
       const key = teamCardVariantKey(slot)
@@ -82,7 +85,7 @@ export class DeckHelperRevamp {
       const count = used.get(key) ?? 0
       if (!card || count >= card.quantity) return []
       used.set(key, count + 1)
-      return [{ cardName: card.cardName, borders: canonicalBorders(card.borders) }]
+      return [{ cardName: card.cardName, borders: canonicalBorders(card.borders), mutationWeather: card.mutationWeather ?? null }]
     })
   }
 
@@ -105,10 +108,11 @@ export class DeckHelperRevamp {
     return selected.length ? `conic-gradient(from 20deg, ${[...selected, selected[0]].join(',')})` : 'linear-gradient(145deg,#303846,#171c25)'
   }
 
-  private renderArt(name: string, borders: BorderName[], compact = false) {
+  private renderArt(name: string, borders: BorderName[], compact = false, mutationWeather?: MutationWeather | null) {
     const definition = cardDefinition(name)
     const image = definition ? thumbnail(definition.imageAssetId) : ''
-    return `<div class="rv-art ${compact ? 'compact' : ''}" style="background:${escapeHtml(this.borderGradient(borders))}"><div>${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(name)}">` : '<span>?</span>'}</div></div>`
+    const mutationBadge = mutationWeather ? `<em class="rv-mutation-badge">${escapeHtml(mutationWeather)}</em>` : ''
+    return `<div class="rv-art ${compact ? 'compact' : ''} ${mutationWeather ? 'mutated' : ''}" style="background:${escapeHtml(this.borderGradient(borders))}"><div>${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(name)}">` : '<span>?</span>'}${mutationBadge}</div></div>`
   }
 
   private render() {
@@ -145,9 +149,9 @@ export class DeckHelperRevamp {
     const owned = this.state.inventory.cards
       .filter((card) => {
         const def = cardDefinition(card.cardName)
-        return !ownedQuery || card.cardName.toLowerCase().includes(ownedQuery) || (def?.ability || '').toLowerCase().includes(ownedQuery) || borderLabel(card.borders).toLowerCase().includes(ownedQuery)
+        return !ownedQuery || card.cardName.toLowerCase().includes(ownedQuery) || (def?.ability || '').toLowerCase().includes(ownedQuery) || cardVariantLabel(card.borders, card.mutationWeather).toLowerCase().includes(ownedQuery)
       })
-      .sort((a, b) => a.cardName.localeCompare(b.cardName) || borderLabel(a.borders).localeCompare(borderLabel(b.borders)))
+      .sort((a, b) => a.cardName.localeCompare(b.cardName) || cardVariantLabel(a.borders, a.mutationWeather).localeCompare(cardVariantLabel(b.borders, b.mutationWeather)))
     const query = this.catalogSearch.trim().toLowerCase()
     const catalog = depthSelectableCards
       .filter((card) => !query || card.name.toLowerCase().includes(query) || (card.ability || '').toLowerCase().includes(query) || (card.weather || '').toLowerCase().includes(query) || (card.pack || '').toLowerCase().includes(query))
@@ -155,12 +159,12 @@ export class DeckHelperRevamp {
 
     return `
       <section class="rv-page-title">
-        <div><span>Step 1</span><h1>Build your inventory</h1><p>Search a card, choose its borders, and click Add. No dragging required.</p></div>
+        <div><span>Step 1</span><h1>Build your inventory</h1><p>Search a card, choose its borders and mutation, and click Add. No dragging required.</p></div>
         <button class="rv-primary" data-action="tab" data-tab="optimize" ${this.ownedCopies() < 4 ? 'disabled' : ''}>Go to Optimize →</button>
       </section>
 
       <section class="rv-panel rv-add-panel">
-        <div class="rv-section-head"><div><h2>Add cards</h2><p>Border choices only apply to the card you add.</p></div><b>${catalog.length} results</b></div>
+        <div class="rv-section-head"><div><h2>Add cards</h2><p>Border and mutation choices only apply to the card you add.</p></div><b>${catalog.length} results</b></div>
         <div class="rv-search"><span>⌕</span><input id="catalog-search" value="${escapeHtml(this.catalogSearch)}" placeholder="Search card, ability, weather, or pack…" autocomplete="off"></div>
         <div class="rv-catalog-grid">${catalog.map((card) => this.renderCatalogCard(card)).join('')}</div>
       </section>
@@ -180,20 +184,30 @@ export class DeckHelperRevamp {
     return canonicalBorders(this.catalogBorders.get(name) ?? [])
   }
 
+  private catalogMutationFor(name: string): MutationWeather | null {
+    return normalizeMutationWeather(this.catalogMutations.get(name), cardDefinition(name))
+  }
+
+  private mutationOptions(selected?: MutationWeather | null) {
+    return `<option value="">None</option>${MUTATION_WEATHERS.map((weather) => `<option value="${escapeHtml(weather)}" ${selected === weather ? 'selected' : ''}>${escapeHtml(weather)} · ×${WEATHER_MUTATION_STAT_MULTIPLIERS[weather]}</option>`).join('')}`
+  }
+
   private renderCatalogCard(card: (typeof cards)[number]) {
     const borders = this.catalogBordersFor(card.name)
-    const variantKey = cardVariantKey(card.name, borders)
-    const owned = this.state.inventory.cards.find((item) => cardVariantKey(item.cardName, item.borders) === variantKey)
+    const mutationWeather = this.catalogMutationFor(card.name)
+    const variantKey = cardVariantKey(card.name, borders, mutationWeather)
+    const owned = this.state.inventory.cards.find((item) => cardVariantKey(item.cardName, item.borders, item.mutationWeather) === variantKey)
     const description = card.ability ? abilities[card.ability] : ''
     const atCardLimit = this.ownedCopies() >= MAX_SELECTED_CARDS
     return `<article class="rv-catalog-card">
-      ${this.renderArt(card.name, borders)}
+      ${this.renderArt(card.name, borders, false, mutationWeather)}
       <div class="rv-catalog-body">
         <div class="rv-card-title"><strong>${escapeHtml(card.name)}</strong><span>1/${formatCompact(card.rarity)}</span></div>
         <p class="rv-ability"><b>${escapeHtml(card.ability || 'No ability')}</b>${description ? `<span>${escapeHtml(description)}</span>` : ''}</p>
         <div class="rv-border-row" aria-label="Card borders">
           ${CARD_BORDERS.map((border) => `<button class="rv-border ${borders.includes(border) ? 'active' : ''}" data-action="catalog-border" data-name="${escapeHtml(card.name)}" data-border="${border}" title="${border}">${border[0]}</button>`).join('')}
         </div>
+        ${mutationEligibleCard(card) ? `<label class="rv-mutation-field"><span>Mutation</span><select data-action="catalog-mutation" data-name="${escapeHtml(card.name)}">${this.mutationOptions(mutationWeather)}</select></label>` : ''}
         <button class="rv-add-card ${owned ? 'owned' : ''}" data-action="catalog-add" data-name="${escapeHtml(card.name)}" ${atCardLimit ? 'disabled' : ''}>${atCardLimit ? `Inventory full · ${MAX_SELECTED_CARDS}/${MAX_SELECTED_CARDS}` : owned ? `Add another · owned ×${owned.quantity}` : '+ Add to inventory'}</button>
       </div>
     </article>`
@@ -201,12 +215,12 @@ export class DeckHelperRevamp {
 
   private renderOwnedCard(card: OwnedCard) {
     const def = cardDefinition(card.cardName)
-    const key = enc(cardVariantKey(card.cardName, card.borders))
+    const key = enc(cardVariantKey(card.cardName, card.borders, card.mutationWeather))
     const locked = card.locked || card.lockedPosition !== null
     return `<article class="rv-owned-card ${locked ? 'locked' : ''}">
       <div class="rv-owned-main">
-        ${this.renderArt(card.cardName, card.borders, true)}
-        <div class="rv-owned-info"><strong>${escapeHtml(card.cardName)}</strong><span>${escapeHtml(borderLabel(card.borders))}</span><small>${escapeHtml(def?.ability || 'No ability')}</small></div>
+        ${this.renderArt(card.cardName, card.borders, true, card.mutationWeather)}
+        <div class="rv-owned-info"><strong>${escapeHtml(card.cardName)}</strong><span>${escapeHtml(cardVariantLabel(card.borders, card.mutationWeather))}</span><small>${escapeHtml(def?.ability || 'No ability')}</small></div>
       </div>
       <div class="rv-qty" aria-label="Quantity"><button data-action="qty-minus" data-key="${key}">−</button><b>×${card.quantity}</b><button data-action="qty-plus" data-key="${key}" ${this.ownedCopies() >= MAX_SELECTED_CARDS ? 'disabled' : ''}>+</button></div>
       <div class="rv-lock-control">
@@ -220,6 +234,7 @@ export class DeckHelperRevamp {
       </div>
       <details class="rv-advanced-row"><summary>Advanced</summary><div>
         <span>Borders</span><div class="rv-border-row">${CARD_BORDERS.map((border) => `<button class="rv-border ${card.borders.includes(border) ? 'active' : ''}" data-action="owned-border" data-key="${key}" data-border="${border}">${border[0]}</button>`).join('')}</div>
+        ${mutationEligibleCard(def) ? `<label class="rv-mutation-field"><span>Mutation</span><select data-action="owned-mutation" data-key="${key}">${this.mutationOptions(card.mutationWeather)}</select></label>` : ''}
       </div></details>
     </article>`
   }
@@ -250,7 +265,7 @@ export class DeckHelperRevamp {
   }
 
   private renderTransferPanel() {
-    return `<details class="rv-panel rv-transfer"><summary><strong>Import / Export inventory</strong><span>Backup or move your inventory to another device</span></summary><div class="rv-transfer-body"><textarea id="inventory-code" spellcheck="false" placeholder="DHINV1:…">${escapeHtml(this.inventoryCodeText)}</textarea><div class="rv-actions"><button data-action="copy-inventory">Copy current inventory</button><button data-action="load-inventory" ${this.inventoryCodeText.trim() ? '' : 'disabled'}>Load pasted code</button><button data-action="clear-inventory-code">Clear</button></div>${this.inventoryCodeStatus ? `<small>${escapeHtml(this.inventoryCodeStatus)}</small>` : ''}</div></details>`
+    return `<details class="rv-panel rv-transfer"><summary><strong>Import / Export inventory</strong><span>Backup or move your inventory to another device</span></summary><div class="rv-transfer-body"><textarea id="inventory-code" spellcheck="false" placeholder="DHINV2:…">${escapeHtml(this.inventoryCodeText)}</textarea><div class="rv-actions"><button data-action="copy-inventory">Copy current inventory</button><button data-action="load-inventory" ${this.inventoryCodeText.trim() ? '' : 'disabled'}>Load pasted code</button><button data-action="clear-inventory-code">Clear</button></div>${this.inventoryCodeStatus ? `<small>${escapeHtml(this.inventoryCodeStatus)}</small>` : ''}</div></details>`
   }
 
   private renderOptimize() {
@@ -288,10 +303,10 @@ export class DeckHelperRevamp {
   }
 
   private renderOptimizerLock(card: OwnedCard) {
-    const key = enc(cardVariantKey(card.cardName, card.borders))
+    const key = enc(cardVariantKey(card.cardName, card.borders, card.mutationWeather))
     const locked = card.locked || card.lockedPosition !== null
     return `<article class="rv-lock-card ${locked ? 'active' : ''}">
-      <button class="rv-lock-main" data-action="card-lock" data-key="${key}">${this.renderArt(card.cardName, card.borders, true)}<span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))} · ×${card.quantity}</small></span><b>${locked ? '✓ Keep' : '+ Keep'}</b></button>
+      <button class="rv-lock-main" data-action="card-lock" data-key="${key}">${this.renderArt(card.cardName, card.borders, true, card.mutationWeather)}<span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(cardVariantLabel(card.borders, card.mutationWeather))} · ×${card.quantity}</small></span><b>${locked ? '✓ Keep' : '+ Keep'}</b></button>
       ${locked ? `<div class="rv-inline-position"><span>Slot</span>${['Any', '1', '2', '3', '4'].map((label, index) => { const value = index - 1; const active = value === -1 ? card.lockedPosition === null : card.lockedPosition === value; return `<button class="${active ? 'active' : ''}" data-action="card-position" data-key="${key}" data-position="${value}">${label}</button>` }).join('')}</div>` : ''}
     </article>`
   }
@@ -335,7 +350,7 @@ export class DeckHelperRevamp {
     const powerEstimate = result.quickEstimate ?? result.metrics.medianDepth
     return `<article class="rv-result-card ${index === 0 ? 'winner' : ''}">
       <div class="rv-result-rank"><b>#${index + 1}</b>${index === 0 ? '<span>Best match</span>' : ''}</div>
-      <div class="rv-result-team">${result.loadout.cards.map((card, slot) => `<div class="rv-result-slot">${this.renderArt(card.cardName, card.borders, true)}<div><span>Slot ${slot + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small></div></div>`).join('')}</div>
+      <div class="rv-result-team">${result.loadout.cards.map((card, slot) => `<div class="rv-result-slot">${this.renderArt(card.cardName, card.borders, true, card.mutationWeather)}<div><span>Slot ${slot + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(cardVariantLabel(card.borders, card.mutationWeather))}</small></div></div>`).join('')}</div>
       <div class="rv-result-meta"><span>Stat Aura <b>${escapeHtml(auraLabel(result.loadout.statAura))}</b></span><span>Ability Aura <b>${escapeHtml(auraLabel(result.loadout.abilityAura))}</b></span><span>Power estimate <b>~${formatNumber(powerEstimate)}</b></span><span>Reliable Depth <b>${formatNumber(result.metrics.reliabilityDepth ?? result.metrics.minimumDepth)}</b></span><span>Median Depth <b>${formatNumber(result.metrics.medianDepth)}</b></span><span>Average <b>${formatNumber(result.metrics.averageDepth, 1)}</b></span></div>
       ${result.metrics.trusted ? '' : `<div class="rv-warning">Some mechanics are not fully verified: ${escapeHtml(result.metrics.unsupportedAbilities.join(', '))}</div>`}
       <div class="rv-result-actions"><button class="rv-primary" data-action="copy-result" data-id="${escapeHtml(result.id)}">Copy Depths Code</button><button data-action="use-result" data-id="${escapeHtml(result.id)}">Use Deck</button><button data-action="save-result" data-id="${escapeHtml(result.id)}">Save</button></div>
@@ -350,7 +365,7 @@ export class DeckHelperRevamp {
   }
 
   private renderLoadout(loadout: TeamLoadout) {
-    return `<div class="rv-loadout"><div class="rv-loadout-cards">${loadout.cards.map((card, index) => `<div>${this.renderArt(card.cardName, card.borders, true)}<span>${index + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(borderLabel(card.borders))}</small></div>`).join('')}</div><div class="rv-loadout-auras"><span>Stat <b>${escapeHtml(auraLabel(loadout.statAura))}</b></span><span>Ability <b>${escapeHtml(auraLabel(loadout.abilityAura))}</b></span></div></div>`
+    return `<div class="rv-loadout"><div class="rv-loadout-cards">${loadout.cards.map((card, index) => `<div>${this.renderArt(card.cardName, card.borders, true, card.mutationWeather)}<span>${index + 1}</span><strong>${escapeHtml(card.cardName)}</strong><small>${escapeHtml(cardVariantLabel(card.borders, card.mutationWeather))}</small></div>`).join('')}</div><div class="rv-loadout-auras"><span>Stat <b>${escapeHtml(auraLabel(loadout.statAura))}</b></span><span>Ability <b>${escapeHtml(auraLabel(loadout.abilityAura))}</b></span></div></div>`
   }
 
   private onInput(event: Event) {
@@ -369,6 +384,8 @@ export class DeckHelperRevamp {
     const action = target.dataset.action
     if (action === 'aura-border') this.setAuraBorder(target.dataset.kind as AuraKind, target.dataset.name || '', target.value as AuraOwnedBorder)
     else if (action === 'optimizer-aura') this.setOptimizerAura(target.dataset.kind as AuraKind, target.value)
+    else if (action === 'catalog-mutation') this.setCatalogMutation(target.dataset.name || '', target.value)
+    else if (action === 'owned-mutation') this.setOwnedMutation(target.dataset.key || '', target.value)
   }
 
   private onClick(event: Event) {
@@ -378,7 +395,7 @@ export class DeckHelperRevamp {
     if (action === 'tab') { this.tab = target.dataset.tab as Tab; this.render(); return }
     if (action === 'clear-error') { this.error = ''; this.render(); return }
     if (action === 'catalog-border') this.toggleCatalogBorder(target.dataset.name || '', target.dataset.border as BorderName)
-    else if (action === 'catalog-add') this.addCard(target.dataset.name || '', this.catalogBordersFor(target.dataset.name || ''))
+    else if (action === 'catalog-add') this.addCard(target.dataset.name || '', this.catalogBordersFor(target.dataset.name || ''), this.catalogMutationFor(target.dataset.name || ''))
     else if (action === 'qty-minus') this.changeQuantity(target.dataset.key || '', -1)
     else if (action === 'qty-plus') this.changeQuantity(target.dataset.key || '', 1)
     else if (action === 'card-lock') this.toggleLock(target.dataset.key || '')
@@ -426,12 +443,18 @@ export class DeckHelperRevamp {
     this.render()
   }
 
-  private findOwned(encodedKey: string) {
-    const key = dec(encodedKey)
-    return this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders) === key)
+  private setCatalogMutation(name: string, value: string) {
+    const mutationWeather = normalizeMutationWeather(value, cardDefinition(name))
+    this.catalogMutations.set(name, mutationWeather)
+    this.render()
   }
 
-  private addCard(name: string, borders: BorderName[]) {
+  private findOwned(encodedKey: string) {
+    const key = dec(encodedKey)
+    return this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather) === key)
+  }
+
+  private addCard(name: string, borders: BorderName[], mutationWeather?: MutationWeather | null) {
     const definition = cardDefinition(name)
     if (!definition || (definition.unobtainable && definition.name !== 'Conqueror')) return
     if (this.ownedCopies() >= MAX_SELECTED_CARDS) {
@@ -440,10 +463,11 @@ export class DeckHelperRevamp {
       return
     }
     const normalized = canonicalBorders(borders)
-    const key = cardVariantKey(name, normalized)
-    const existing = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders) === key)
+    const normalizedMutation = normalizeMutationWeather(mutationWeather, definition)
+    const key = cardVariantKey(name, normalized, normalizedMutation)
+    const existing = this.state.inventory.cards.find((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather) === key)
     if (existing) existing.quantity = Math.min(999, existing.quantity + 1)
-    else this.state.inventory.cards.push({ cardName: name, quantity: 1, borders: normalized, locked: false, lockedPosition: null })
+    else this.state.inventory.cards.push({ cardName: name, quantity: 1, borders: normalized, mutationWeather: normalizedMutation, locked: false, lockedPosition: null })
     this.error = ''
     this.persist()
     this.render()
@@ -495,23 +519,42 @@ export class DeckHelperRevamp {
   private toggleOwnedBorder(encodedKey: string, border: BorderName) {
     const card = this.findOwned(encodedKey)
     if (!card || !CARD_BORDERS.includes(border)) return
-    const oldKey = cardVariantKey(card.cardName, card.borders)
+    const oldKey = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
     const nextBorders = canonicalBorders(card.borders.includes(border) ? card.borders.filter((value) => value !== border) : [...card.borders, border])
-    const nextKey = cardVariantKey(card.cardName, nextBorders)
-    const duplicate = this.state.inventory.cards.find((item) => item !== card && cardVariantKey(item.cardName, item.borders) === nextKey)
+    const nextKey = cardVariantKey(card.cardName, nextBorders, card.mutationWeather)
+    const duplicate = this.state.inventory.cards.find((item) => item !== card && cardVariantKey(item.cardName, item.borders, item.mutationWeather) === nextKey)
     if (duplicate) {
       duplicate.quantity = Math.min(999, duplicate.quantity + card.quantity)
       duplicate.locked = duplicate.locked || card.locked
       duplicate.lockedPosition = duplicate.lockedPosition ?? card.lockedPosition
       this.state.inventory.cards = this.state.inventory.cards.filter((item) => item !== card)
     } else card.borders = nextBorders
-    this.state.currentDeck.cards = this.state.currentDeck.cards.map((slot) => teamCardVariantKey(slot) === oldKey ? { cardName: card.cardName, borders: nextBorders } : slot)
+    this.state.currentDeck.cards = this.state.currentDeck.cards.map((slot) => teamCardVariantKey(slot) === oldKey ? { cardName: card.cardName, borders: nextBorders, mutationWeather: card.mutationWeather ?? null } : slot)
+    this.persist(); this.render()
+  }
+
+  private setOwnedMutation(encodedKey: string, value: string) {
+    const card = this.findOwned(encodedKey)
+    if (!card) return
+    const definition = cardDefinition(card.cardName)
+    const oldKey = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
+    const nextMutation = normalizeMutationWeather(value, definition)
+    const nextKey = cardVariantKey(card.cardName, card.borders, nextMutation)
+    const duplicate = this.state.inventory.cards.find((item) => item !== card && cardVariantKey(item.cardName, item.borders, item.mutationWeather) === nextKey)
+    if (duplicate) {
+      duplicate.quantity = Math.min(999, duplicate.quantity + card.quantity)
+      duplicate.locked = duplicate.locked || card.locked
+      duplicate.lockedPosition = duplicate.lockedPosition ?? card.lockedPosition
+      this.state.inventory.cards = this.state.inventory.cards.filter((item) => item !== card)
+    } else card.mutationWeather = nextMutation
+    this.state.currentDeck.cards = this.state.currentDeck.cards.map((slot) => teamCardVariantKey(slot) === oldKey ? { cardName: card.cardName, borders: canonicalBorders(card.borders), mutationWeather: nextMutation } : slot)
+    this.results = []
     this.persist(); this.render()
   }
 
   private removeCard(encodedKey: string) {
     const key = dec(encodedKey)
-    this.state.inventory.cards = this.state.inventory.cards.filter((card) => cardVariantKey(card.cardName, card.borders) !== key)
+    this.state.inventory.cards = this.state.inventory.cards.filter((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather) !== key)
     this.state.currentDeck.cards = this.state.currentDeck.cards.filter((card) => teamCardVariantKey(card) !== key)
     this.results = []
     this.persist(); this.render()
@@ -734,7 +777,7 @@ export class DeckHelperRevamp {
     if (!favorite) return
     for (const card of this.state.inventory.cards) { card.locked = false; card.lockedPosition = null }
     for (const [slot, selected] of favorite.loadout.cards.entries()) {
-      const owned = this.state.inventory.cards.find((card) => teamCardVariantKey(selected) === cardVariantKey(card.cardName, card.borders))
+      const owned = this.state.inventory.cards.find((card) => teamCardVariantKey(selected) === cardVariantKey(card.cardName, card.borders, card.mutationWeather))
       if (owned) { owned.locked = true; owned.lockedPosition = slot as DeckSlot }
     }
     for (const aura of this.state.inventory.statAuras) aura.locked = aura.auraName === favorite.loadout.statAura?.auraName

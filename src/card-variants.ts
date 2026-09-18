@@ -1,4 +1,4 @@
-import type { BorderName, TeamCard } from './types'
+import type { BorderName, MutationWeather, TeamCard } from './types'
 
 export const CARD_BORDER_ORDER: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 
@@ -17,12 +17,21 @@ export function bordersFromKey(key: string): BorderName[] {
   return CARD_BORDER_ORDER.filter((border) => selected.has(border))
 }
 
-export function cardVariantKey(cardName: string, borders: readonly BorderName[] = []): string {
-  return `${cardName}\u0000${borderKey(borders)}`
+export function cardVariantKey(
+  cardName: string,
+  borders: readonly BorderName[] = [],
+  mutationWeather?: MutationWeather | null,
+): string {
+  return `${cardName}\u0000${borderKey(borders)}\u0000${mutationWeather || ''}`
 }
 
-export function teamCardVariantKey(card: Pick<TeamCard, 'cardName' | 'borders'>): string {
-  return cardVariantKey(card.cardName, card.borders)
+export function teamCardVariantKey(card: Pick<TeamCard, 'cardName' | 'borders' | 'mutationWeather'>): string {
+  return cardVariantKey(card.cardName, card.borders, card.mutationWeather)
+}
+
+export function cardVariantLabel(borders: readonly BorderName[] = [], mutationWeather?: MutationWeather | null): string {
+  const border = borderVariantLabel(borders)
+  return mutationWeather ? `${border} · ${mutationWeather} Mutation` : border
 }
 
 export function borderVariantLabel(borders: readonly BorderName[] = []): string {

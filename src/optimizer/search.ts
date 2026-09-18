@@ -156,13 +156,13 @@ function boundedChoiceCount(items: Array<{ card: OwnedCard; capacity: number }>,
 function cardRawScore(card: OwnedCard): number {
   const definition = CARD_BY_NAME.get(card.cardName)
   if (!definition) return 0
-  const power = getPower(definition, card.borders)
+  const power = getPower(definition, card.borders, card.mutationWeather)
   const hpFactor = Math.max(0.25, definition.hpMultiplier || 1)
   return Math.log10(power + 10) * Math.sqrt(hpFactor)
 }
 
 function ownedCardToTeamCard(card: OwnedCard): TeamCard {
-  return { cardName: card.cardName, borders: canonicalBorders(card.borders) }
+  return { cardName: card.cardName, borders: canonicalBorders(card.borders), mutationWeather: card.mutationWeather ?? null }
 }
 
 function validateInventory(inventory: InventoryState) {
@@ -392,13 +392,13 @@ function generateTeamNameSets(inventory: InventoryState, cap: number): { sets: s
   const { validCards, locked } = validateInventory(inventory)
   const reserved = new Map<string, number>()
   for (const card of locked) {
-    const key = cardVariantKey(card.cardName, card.borders)
+    const key = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
     reserved.set(key, (reserved.get(key) ?? 0) + 1)
   }
   const need = 4 - locked.length
   const selectable = validCards
     .map((card) => {
-      const key = cardVariantKey(card.cardName, card.borders)
+      const key = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
       return { card, capacity: Math.min(4, Math.max(0, card.quantity - (reserved.get(key) ?? 0))) }
     })
     .filter((entry) => entry.capacity > 0)
@@ -409,8 +409,8 @@ function generateTeamNameSets(inventory: InventoryState, cap: number): { sets: s
   const add = (extras: OwnedCard[]) => {
     if (extras.length !== need) return
     const keys = [
-      ...locked.map((card) => cardVariantKey(card.cardName, card.borders)),
-      ...extras.map((card) => cardVariantKey(card.cardName, card.borders)),
+      ...locked.map((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather)),
+      ...extras.map((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather)),
     ]
     if (keys.length !== 4) return
     const key = [...keys].sort().join('\u0000')
@@ -419,7 +419,7 @@ function generateTeamNameSets(inventory: InventoryState, cap: number): { sets: s
     sets.push(keys)
   }
 
-  if (need === 0) return { sets: [locked.map((card) => cardVariantKey(card.cardName, card.borders))], possible: 1 }
+  if (need === 0) return { sets: [locked.map((card) => cardVariantKey(card.cardName, card.borders, card.mutationWeather))], possible: 1 }
 
   const ranked = [...selectable].sort((a, b) => cardRawScore(b.card) - cardRawScore(a.card))
   if (possible > cap) {
@@ -476,12 +476,12 @@ function validOrders(cards: TeamCard[], inventoryMap: Map<string, OwnedCard>): T
   const lockedPositions = [...inventoryMap.values()].filter((card) => card.lockedPosition !== null)
   const seen = new Set<string>()
   return permutations(cards).filter((order) => {
-    const key = order.map((card) => `${card.cardName}:${card.borders.join('+')}`).join('|')
+    const key = order.map((card) => `${card.cardName}:${card.borders.join('+')}:${card.mutationWeather || ''}`).join('|')
     if (seen.has(key)) return false
     seen.add(key)
     return lockedPositions.every((owned) => {
       const at = order[owned.lockedPosition as number]
-      return Boolean(at) && teamCardVariantKey(at) === cardVariantKey(owned.cardName, owned.borders)
+      return Boolean(at) && teamCardVariantKey(at) === cardVariantKey(owned.cardName, owned.borders, owned.mutationWeather)
     })
   })
 }
@@ -683,7 +683,7 @@ function compareRankedTeams(a: RankedTeam, b: RankedTeam): number {
 }
 
 function rankedId(loadout: TeamLoadout): string {
-  const cardsKey = loadout.cards.map((card) => `${card.cardName}:${card.borders.join('+')}`).join('|')
+  const cardsKey = loadout.cards.map((card) => `${card.cardName}:${card.borders.join('+')}:${card.mutationWeather || ''}`).join('|')
   const stat = loadout.statAura ? `${loadout.statAura.auraName}:${loadout.statAura.border || 'Base'}` : '-'
   const ability = loadout.abilityAura ? `${loadout.abilityAura.auraName}:${loadout.abilityAura.border || 'Base'}` : '-'
   return `${cardsKey}::${stat}::${ability}`
@@ -699,7 +699,7 @@ export async function searchBestTeams(
   const settings = settingsWithDefaults(settingsInput)
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
   const { validCards } = validateInventory(inventory)
-  const inventoryMap = new Map(validCards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
+  const inventoryMap = new Map(validCards.map((card) => [cardVariantKey(card.cardName, card.borders, card.mutationWeather), card] as const))
   const statOptions = auraOptions(inventory, 'stat')
   const abilityOptions = auraOptions(inventory, 'ability')
 
@@ -940,7 +940,7 @@ export async function searchReplacements(
   const searchSeeds = makeSearchSeeds(Math.max(SEARCH_SEED_POOL_SIZE, settings.finalSeedCount))
   if (currentLoadout.cards.length !== 4) throw new Error('Build a complete 4-card current deck first.')
   const { validCards } = validateInventory(inventory)
-  const inventoryMap = new Map(validCards.map((card) => [cardVariantKey(card.cardName, card.borders), card] as const))
+  const inventoryMap = new Map(validCards.map((card) => [cardVariantKey(card.cardName, card.borders, card.mutationWeather), card] as const))
   const usedElsewhere = new Map<string, number>()
   currentLoadout.cards.forEach((card, index) => {
     if (index === slot) return
@@ -949,7 +949,7 @@ export async function searchReplacements(
   })
   const currentKey = currentLoadout.cards[slot] ? teamCardVariantKey(currentLoadout.cards[slot]) : ''
   const choices = validCards.filter((card) => {
-    const key = cardVariantKey(card.cardName, card.borders)
+    const key = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
     return key !== currentKey && (usedElsewhere.get(key) ?? 0) < card.quantity
   })
   const runtime: SearchRuntime = {
@@ -992,6 +992,7 @@ export async function searchReplacements(
     results.push({
       cardName: finalist.card.cardName,
       borders: canonicalBorders(finalist.card.borders),
+      mutationWeather: finalist.card.mutationWeather ?? null,
       loadout: finalist.loadout,
       metrics,
       medianDelta: metrics.medianDepth - baseline.medianDepth,

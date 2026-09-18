@@ -83,6 +83,7 @@ export function getStatAuraValue(aura: AuraDefinition, border?: AuraBorderName |
 }
 
 export function getSkillAuraValue(aura: AuraDefinition, border?: AuraBorderName | null): number {
+  if (aura.name === 'Jurassic World') return 20
   const tier = getAuraTier(border)
   const custom = CUSTOM_SKILL_VALUES[aura.name]
   if (custom) return custom[tier] ?? custom[0] ?? 0
@@ -100,7 +101,7 @@ function isStatAuraBoosted(aura: AuraDefinition, card: CombatCard): boolean {
   const pack = BOOSTED_PACKS[aura.name]
   if (pack && card.definition.pack === pack) return true
   const weather = BOOSTED_WEATHERS[aura.name]
-  if (weather && card.definition.weather === weather) return true
+  if (weather && (card.definition.weather === weather || card.mutationWeather === weather)) return true
   return false
 }
 
@@ -112,7 +113,7 @@ export function statAuraPercentForCard(
   const base = getStatAuraValue(aura, border)
   if (aura.name === 'General Sun Tzu') return base
   if (aura.name === 'The One Ring') {
-    return !card.definition.weather && !card.definition.boss ? base : 0
+    return !card.definition.weather && !card.mutationWeather && !card.definition.boss ? base : 0
   }
   const value = isStatAuraBoosted(aura, card) ? base * Number(aura.boostMult || 1) : base
   return ['The Sequel', 'Myths', 'Gamer'].includes(aura.name) ? Math.min(300, value) : value
@@ -157,7 +158,8 @@ export function applySkillAuraTeamEffects(
 
   if (aura.name === 'Jurassic World') {
     const prehistoricCount = team.filter((card) => card.definition.pack === 'Prehistoric').length
-    const multiplier = 1 + prehistoricCount * value / 100
+    const bonus = Math.min(80, prehistoricCount * 20)
+    const multiplier = 1 + bonus / 100
     if (prehistoricCount > 0) {
       for (const card of team) {
         if (card.definition.pack !== 'Prehistoric') continue
@@ -166,7 +168,7 @@ export function applySkillAuraTeamEffects(
         card.hp *= multiplier
       }
     }
-    return { aura, value, implemented: true }
+    return { aura, value: 20, implemented: true }
   }
 
   if (aura.name === 'Magical Elf') {

@@ -3,12 +3,14 @@ import cards from './data/cards'
 import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 import type { AuraBorderName, BorderName, TeamLoadout } from './types'
 import { cardVariantKey, canonicalBorders } from './card-variants'
+import { normalizeMutationWeather } from './mutations'
 import { depthSelectableAbilityAuraNames, depthSelectableCardNames, depthSelectableStatAuraNames } from './selectable'
 
 const STORAGE_KEY = 'deckhelper.state.v1'
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
-const INVENTORY_CODE_PREFIX = 'DHINV1:'
+const INVENTORY_CODE_PREFIX_V1 = 'DHINV1:'
+const INVENTORY_CODE_PREFIX_V2 = 'DHINV2:'
 const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
 
 const EMPTY_LOADOUT: TeamLoadout = { cards: [], statAura: null, abilityAura: null }
@@ -51,10 +53,13 @@ function cleanCard(value: unknown): OwnedCard | null {
   const position = Number.isInteger(raw.lockedPosition) && Number(raw.lockedPosition) >= 0 && Number(raw.lockedPosition) <= 3
     ? Number(raw.lockedPosition) as DeckSlot
     : null
+  const definition = CARD_BY_NAME.get(raw.cardName)
+  const mutationWeather = normalizeMutationWeather((raw as { mutationWeather?: unknown }).mutationWeather, definition)
   return {
     cardName: raw.cardName,
     quantity,
     borders: canonicalBorders(borders),
+    mutationWeather,
     locked: Boolean(raw.locked || position !== null),
     lockedPosition: position,
   }
@@ -81,7 +86,7 @@ export function sanitizeInventory(value: unknown): InventoryState {
   const cleanedCards = Array.isArray(raw.cards) ? raw.cards.map(cleanCard).filter((card): card is OwnedCard => Boolean(card)) : []
   const variants = new Map<string, OwnedCard>()
   for (const card of cleanedCards) {
-    const key = cardVariantKey(card.cardName, card.borders)
+    const key = cardVariantKey(card.cardName, card.borders, card.mutationWeather)
     const existing = variants.get(key)
     if (!existing) {
       variants.set(key, { ...card, borders: canonicalBorders(card.borders) })
@@ -119,17 +124,23 @@ function decodeBase64Url(value: string): string {
 }
 
 export function exportInventoryCode(inventory: InventoryState): string {
-  const payload = { version: 1, inventory: sanitizeInventory(inventory) }
-  return INVENTORY_CODE_PREFIX + encodeBase64Url(JSON.stringify(payload))
+  const payload = { version: 2, inventory: sanitizeInventory(inventory) }
+  return INVENTORY_CODE_PREFIX_V2 + encodeBase64Url(JSON.stringify(payload))
 }
 
 export function importInventoryCode(code: string): InventoryState {
   const trimmed = code.trim()
-  if (!trimmed.startsWith(INVENTORY_CODE_PREFIX)) throw new Error('That is not a DeckHelper inventory code.')
+  const prefix = trimmed.startsWith(INVENTORY_CODE_PREFIX_V2)
+    ? INVENTORY_CODE_PREFIX_V2
+    : trimmed.startsWith(INVENTORY_CODE_PREFIX_V1)
+      ? INVENTORY_CODE_PREFIX_V1
+      : null
+  if (!prefix) throw new Error('That is not a DeckHelper inventory code.')
   try {
-    const decoded = decodeBase64Url(trimmed.slice(INVENTORY_CODE_PREFIX.length))
+    const decoded = decodeBase64Url(trimmed.slice(prefix.length))
     const payload = JSON.parse(decoded) as { version?: unknown; inventory?: unknown }
-    if (payload.version !== 1) throw new Error('Unsupported inventory code version.')
+    const expectedVersion = prefix === INVENTORY_CODE_PREFIX_V2 ? 2 : 1
+    if (payload.version !== expectedVersion) throw new Error('Unsupported inventory code version.')
     if (!payload.inventory || typeof payload.inventory !== 'object') throw new Error('Inventory data is missing.')
     return sanitizeInventory(payload.inventory)
   } catch (error) {
@@ -156,12 +167,14 @@ function cleanLoadout(value: unknown): TeamLoadout {
   const cards = Array.isArray(raw.cards)
     ? raw.cards.slice(0, 4).flatMap((slot) => {
         if (!slot || typeof slot !== 'object') return []
-        const candidate = slot as { cardName?: unknown; borders?: unknown }
+        const candidate = slot as { cardName?: unknown; borders?: unknown; mutationWeather?: unknown }
         if (typeof candidate.cardName !== 'string' || !candidate.cardName || !depthSelectableCardNames.has(candidate.cardName)) return []
         const borders = Array.isArray(candidate.borders)
           ? candidate.borders.filter((border): border is BorderName => CARD_BORDERS.includes(border as BorderName))
           : []
-        return [{ cardName: candidate.cardName, borders: canonicalBorders(borders) }]
+        const definition = CARD_BY_NAME.get(candidate.cardName)
+        const mutationWeather = normalizeMutationWeather(candidate.mutationWeather, definition)
+        return [{ cardName: candidate.cardName, borders: canonicalBorders(borders), mutationWeather }]
       })
     : []
   return {
