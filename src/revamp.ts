@@ -24,7 +24,7 @@ import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 
 const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
-const MAX_SELECTED_CARDS = 15
+const MAX_SELECTED_CARDS = 30
 const MAX_STAT_AURAS = 4
 type Tab = 'optimize' | 'inventory' | 'saved'
 
