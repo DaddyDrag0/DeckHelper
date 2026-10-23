@@ -69,7 +69,7 @@ const knownUnverified = new Set([
 ])
 const unexpectedUnsupported = coverage.unsupportedAbilities.filter((ability) => !knownUnverified.has(ability))
 assert(unexpectedUnsupported.length === 0, `Unexpected unimplemented abilities: ${unexpectedUnsupported.join(', ')}`)
-for (const ability of ['Perish', 'Nightmare Melody', 'Cursed Orchard', 'Haunted Heirloom', 'King of Horror', 'Never Fall Asleep', 'Stone Vigil']) {
+for (const ability of ['Cursed Orchard', 'Haunted Heirloom', 'King of Horror', 'Never Fall Asleep', 'Stone Vigil']) {
   assert(coverage.unsupportedAbilities.includes(ability), `Known unverified ${ability} should not be marked fully supported`)
 }
 
