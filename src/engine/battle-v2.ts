@@ -21,7 +21,7 @@ const OTHER_TEAM: Record<BattleTeam, BattleTeam> = { Allies: 'Enemies', Enemies:
 const CARD_BY_NAME = new Map(cards.map((card) => [card.name, card] as const))
 
 const FULLY_SUPPORTED = new Set([
-  'Gathering', 'Remembrance', 'Am I Beautiful?', 'Persistent', 'Chimeric',
+  'Gathering', 'Remembrance', 'Am I Beautiful?', 'Persistent', 
   'First Progenitor', 'Undead Practitioner', 'Big and Large', 'Patience', 'Blade',
   'Clawless', 'Catastrophe', 'Frail', 'Fight Dirty', 'Assassinate', 'Humanity\'s Spirit',
   'Infinite Dagger Works', 'Heart Legacy', 'Heavenly Might', 'Wail', 'Doom',
@@ -75,10 +75,10 @@ const FULLY_SUPPORTED = new Set([
   'Gobble', 'We Want YOU', 'Bloodlust', 'Flesh Eater', 'Forbidden Banquet',
   'Cosmic Maw', 'Hex', 'Order of the Cosmos', 'Honor',
   'Gehenna', 'Beyond Comprehension', 'Imminent Doom', 'Dance of Discord',
-  'Snowscape', 'Plague', 'Spook', 'Perish', 'Blood Bath', 'Undying',
-  'Mirror Image', 'Long Reach', 'Whooping', 'Shapeshifter', 'Heroes',
+  'Snowscape', 'Plague', 'Spook',  'Blood Bath', 'Undying',
+   'Long Reach', 'Whooping', 'Shapeshifter', 'Heroes',
   'God of Trickery', 'Draconian', 'Safeguarding', 'Mother of Dragons', 'Reveal',
-  'Jealousy', 'Nightmare Melody', 'Sap',
+  'Jealousy',  'Sap',
   'Bind Fate', 'Luminescent Veil', 'Ouroboros',
   'Cosmic Rivalry', 'Divine Ascension', 'Mastered Ascension', 'Kitchen', 'Six Realms Staff',
   'Twelve Devas Axe', 'Vajra Short Sword', 'Staff of Perfect Enlightenment', 'Shield of Ahimsa',
@@ -88,7 +88,9 @@ const FULLY_SUPPORTED = new Set([
   'Hidden Blade', 'Glory Kill', 'Split In Two', 'Ruler of Humans', 'Joy', 'Sorrow',
 ])
 
-const BENCH_AFFECTING_UNSUPPORTED = new Set<string>()
+// Halloween source updates changed these effects; historical implementations remain
+// available for legacy replays but must not be reported as confirmed gameplay.
+const BENCH_AFFECTING_UNSUPPORTED = new Set<string>(['Perish', 'Nightmare Melody', 'Chimeric', 'Mirror Image'])
 
 const CONSTELLAR_ABILITIES = [
   'ConstellarVirgo', 'ConstellarScorpio', 'ConstellarSagittarius',
