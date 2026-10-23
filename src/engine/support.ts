@@ -2,7 +2,7 @@ import cards from '../data/cards'
 import { isDepthsSourceEligible } from './depths'
 
 export const SOURCE_ALIGNED_ABILITIES = new Set([
-  'Gathering', 'Remembrance', 'Am I Beautiful?', 'Persistent', 'Chimeric',
+  'Gathering', 'Remembrance', 'Am I Beautiful?', 'Persistent', 
   'First Progenitor', 'Undead Practitioner', 'Big and Large', 'Patience', 'Blade',
   'Clawless', 'Catastrophe', 'Frail', 'Fight Dirty', 'Assassinate', "Humanity's Spirit",
   'Infinite Dagger Works', 'Heart Legacy', 'Heavenly Might', 'Wail', 'Doom',
