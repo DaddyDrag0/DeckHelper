@@ -12,6 +12,7 @@ export interface CardDefinition {
   ability: string | null
   weather: string | null
   pack: string | null
+  collection?: string | null
   boss: boolean
   unobtainable: boolean
   expires: boolean
@@ -28,6 +29,10 @@ export interface AuraDefinition {
   perLevel: number
   boostMult: number | null
   boostedCards: string[]
+  playerStat?: string | null
+  max?: number
+  collection?: string | null
+  expires?: boolean
   unobtainable: boolean
 }
 
