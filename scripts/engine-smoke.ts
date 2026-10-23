@@ -68,7 +68,7 @@ const knownUnverified = new Set([
   'Perish', 'Nightmare Melody', 'Chimeric', 'Mirror Image',
 ])
 const unexpectedUnsupported = coverage.unsupportedAbilities.filter((ability) => !knownUnverified.has(ability))
-assert.equal(unexpectedUnsupported.length, 0, `Unexpected unimplemented abilities: ${unexpectedUnsupported.join(', ')}`)
+assert(unexpectedUnsupported.length === 0, `Unexpected unimplemented abilities: ${unexpectedUnsupported.join(', ')}`)
 for (const ability of knownUnverified) {
   assert(coverage.unsupportedAbilities.includes(ability), `Known unverified ${ability} should not be marked fully supported`)
 }
