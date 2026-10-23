@@ -78,11 +78,16 @@ export function getAuraRarity(aura: AuraDefinition, border?: AuraBorderName | nu
 }
 
 export function getStatAuraValue(aura: AuraDefinition, border?: AuraBorderName | null): number {
+  if (aura.name === 'The Apocalypse') return aura.base + aura.perLevel * getAuraTier(border)
   const rarity = getAuraRarity(aura, border)
   return rarity > 0 ? Math.floor(Math.pow(2, Math.log10(rarity)) / 2) : 0
 }
 
 export function getSkillAuraValue(aura: AuraDefinition, border?: AuraBorderName | null): number {
+  if (aura.type === 'PlayerStat') {
+    const fraction = border === 'Platinum' ? 0.25 : border === 'Crystal' ? 0.5 : border === 'Galaxy' ? 1 : 0
+    return aura.base + ((aura.max ?? aura.base) - aura.base) * fraction
+  }
   if (aura.name === 'Jurassic World') return 20
   const tier = getAuraTier(border)
   const custom = CUSTOM_SKILL_VALUES[aura.name]
@@ -112,6 +117,7 @@ export function statAuraPercentForCard(
 ): number {
   const base = getStatAuraValue(aura, border)
   if (aura.name === 'General Sun Tzu') return base
+  if (aura.name === 'The Apocalypse') return aura.boostedCards.includes(card.definition.name) ? base : 0
   if (aura.name === 'The One Ring') {
     return !card.definition.weather && !card.mutationWeather && !card.definition.boss ? base : 0
   }
