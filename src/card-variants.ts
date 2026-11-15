@@ -34,8 +34,13 @@ export function cardVariantLabel(borders: readonly BorderName[] = [], mutationWe
   return mutationWeather ? `${border} · ${mutationWeather} Mutation` : border
 }
 
+export function isPerfectGem(borders: readonly BorderName[] = []): boolean {
+  return canonicalBorders(borders).length === CARD_BORDER_ORDER.length // All five borders, including Emerald
+}
+
 export function borderVariantLabel(borders: readonly BorderName[] = []): string {
   const ordered = canonicalBorders(borders)
+  if (isPerfectGem(ordered)) return `Perfect Gem · ${ordered.join(' + ')}`
   return ordered.length ? ordered.join(' + ') : 'Base'
 }
 
