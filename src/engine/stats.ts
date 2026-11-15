@@ -2,6 +2,7 @@ import type { BorderName, CardDefinition, MutationWeather, TeamCard } from '../t
 
 export const BORDER_RARITY_MULTIPLIERS: Record<BorderName, number> = {
   Platinum: 100,
+  Emerald: 1_000,
   Crystal: 10_000,
   Ruby: 100_000,
   Galaxy: 1_000_000,

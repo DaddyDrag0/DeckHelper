@@ -7,7 +7,7 @@ import { normalizeMutationWeather } from './mutations'
 import { depthSelectableAbilityAuraNames, depthSelectableCardNames, depthSelectableStatAuraNames } from './selectable'
 
 const STORAGE_KEY = 'deckhelper.state.v1'
-const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
+const CARD_BORDERS: BorderName[] = ['Platinum', 'Emerald', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
 const INVENTORY_CODE_PREFIX_V1 = 'DHINV1:'
 const INVENTORY_CODE_PREFIX_V2 = 'DHINV2:'

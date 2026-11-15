@@ -1,3 +1,4 @@
+import { UNPORTED_NOV_2026_ABILITIES } from './nov2026-unported-abilities'
 import cards from '../src/data/cards'
 import { cardAge } from '../src/data/ages'
 import { createBattleStateV2, simulateBattleV2 } from '../src/engine/battle-v2'
@@ -114,7 +115,11 @@ for (const [ability, card] of representatives) {
   const representativeLoadout: TeamLoadout = { cards: [{ cardName: card.name, borders: [] }] }
   const battle = simulateBattleV2(representativeLoadout, [dummyEnemy()], 10_000 + executed)
   assert(battle.turns > 0 && battle.turns <= 2_000, `${ability}: invalid turn count ${battle.turns}`)
-  assert(!battle.unsupportedAbilities.includes(ability), `${ability}: marked unsupported at runtime`)
+  if (UNPORTED_NOV_2026_ABILITIES.has(ability)) {
+    assert(battle.unsupportedAbilities.includes(ability), `${ability}: unported simulator must remain untrusted`)
+  } else {
+    assert(!battle.unsupportedAbilities.includes(ability), `${ability}: marked unsupported at runtime`)
+  }
   executed += 1
 }
 

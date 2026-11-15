@@ -1,4 +1,4 @@
-export type BorderName = 'Platinum' | 'Crystal' | 'Ruby' | 'Galaxy'
+export type BorderName = 'Platinum' | 'Emerald' | 'Crystal' | 'Ruby' | 'Galaxy'
 export type AuraBorderName = 'Platinum' | 'Crystal' | 'Galaxy'
 export type MutationWeather = 'Storm' | 'Snow' | 'Aurora' | 'Shroud' | 'Meteor Shower' | 'Time Storm' | 'Eclipse' | 'Virus' | 'Blood Rain' | 'Armageddon' | 'Manga'
 export type BattleTeam = 'Allies' | 'Enemies'
