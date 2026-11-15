@@ -4,6 +4,7 @@ import { getAttack, getHealth } from './stats'
 import { SeededRng } from './rng'
 
 const HARD_EXCLUSIONS = new Set(['Vampire Lord', 'Parallax', 'Samurai'])
+const MYTHICAL_WEATHERS = new Set(['The Great Deluge', 'Reality Fracture', 'Dreamfall'])
 export const LEGACY_DEPTHS_BANS = ['Samurai', 'Seraphim', 'Loki', 'Fuxi', 'Parallax', 'Nán Fāng Zhū Què', 'Brachiosaurus', 'Jersey Devil'] as const
 const LEGACY_DEPTHS_BAN_SET = new Set<string>(LEGACY_DEPTHS_BANS)
 
@@ -60,6 +61,7 @@ export function isDepthsSourceEligible(card: CardDefinition): boolean {
   return !card.unobtainable
     && !card.expires
     && !card.boss
+    && !(card.weather && MYTHICAL_WEATHERS.has(card.weather))
     && !HARD_EXCLUSIONS.has(card.name)
     && card.pack !== 'Christmas'
     && card.pack !== 'Halloween'
