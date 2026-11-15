@@ -1,6 +1,6 @@
 import type { BorderName, MutationWeather, TeamCard } from './types'
 
-export const CARD_BORDER_ORDER: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
+export const CARD_BORDER_ORDER: BorderName[] = ['Platinum', 'Emerald', 'Crystal', 'Ruby', 'Galaxy']
 
 export function canonicalBorders(borders: readonly BorderName[] = []): BorderName[] {
   const selected = new Set(borders)
