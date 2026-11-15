@@ -11,8 +11,9 @@
     "test:depths": "tsx scripts/depths-regression.ts && tsx scripts/depths-rewards-regression.ts && tsx scripts/depths-time-regression.ts && tsx scripts/watchdog-heartbeat-regression.ts",
     "test:player": "tsx scripts/player-coverage.ts",
     "test:optimizer": "tsx scripts/optimizer-smoke.ts && tsx scripts/inventory-variant-regression.ts && tsx scripts/mutation-deckhelper-regression.ts && tsx scripts/workspace-regression.ts && tsx scripts/aura-workspace-regression.ts && tsx scripts/inventory-code-regression.ts && tsx scripts/selectable-catalog-regression.ts && tsx scripts/depths-export-regression.ts && tsx scripts/random-seed-regression.ts && tsx scripts/search-mode-regression.ts && tsx scripts/optimizer-v2-regression.ts",
-    "check": "npm run build && npm run test:data && npm run test:engine && npm run test:depths && npm run test:player && npm run test:optimizer",
-    "preview": "vite preview"
+    "check": "npm run build && npm run test:data && npm run test:engine && npm run test:depths && npm run test:player && npm run test:optimizer && npm run test:emerald",
+    "preview": "vite preview",
+    "test:emerald": "tsx scripts/emerald-border-regression.ts"
   },
   "devDependencies": {
     "esbuild": "latest",
