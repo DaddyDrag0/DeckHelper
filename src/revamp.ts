@@ -22,7 +22,7 @@ import { encodeDepthsTeam } from './depths-export'
 import { depthSelectableAuras, depthSelectableCards } from './selectable'
 import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 
-const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
+const CARD_BORDERS: BorderName[] = ['Platinum', 'Emerald', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
 const MAX_SELECTED_CARDS = 30
 const MAX_STAT_AURAS = 4
@@ -100,6 +100,7 @@ export class DeckHelperRevamp {
   private borderGradient(borders: BorderName[]) {
     const palettes: Record<BorderName, string[]> = {
       Platinum: ['#ff6767', '#ffe05f', '#78ed82', '#64e2ff', '#7773ff', '#e66cff'],
+      Emerald: ['#065f46', '#059669', '#10b981', '#6ee7b7'],
       Crystal: ['#7be2ff', '#879cff', '#69d8ff'],
       Ruby: ['#8a1538', '#e62f5b', '#ff829e', '#b31f45'],
       Galaxy: ['#627dff', '#795cff', '#a959ff', '#e85cdd', '#ff5d88'],
