@@ -20,7 +20,7 @@ import { encodeDepthsTeam } from './depths-export'
 import { depthSelectableAuras, depthSelectableCards } from './selectable'
 import { isDepthsSourceEligible, MAX_DEPTH_BANS } from './engine/depths'
 
-const CARD_BORDERS: BorderName[] = ['Platinum', 'Crystal', 'Ruby', 'Galaxy']
+const CARD_BORDERS: BorderName[] = ['Platinum', 'Emerald', 'Crystal', 'Ruby', 'Galaxy']
 const AURA_BORDERS: AuraOwnedBorder[] = ['Base', 'Platinum', 'Crystal', 'Galaxy']
 
 type Tab = 'pool' | 'auras' | 'optimize' | 'decks'
@@ -128,6 +128,7 @@ export class DeckHelperApp {
   private borderGradient(borders: BorderName[]): string {
     const palettes: Record<BorderName, string[]> = {
       Platinum: ['#ff5a5a', '#ffff5a', '#5aff5a', '#5affff', '#5a5aff', '#ff5aff'],
+      Emerald: ['#065f46', '#059669', '#10b981', '#6ee7b7'],
       Crystal: ['#5ad3ff', '#5a6bff', '#5ae9ff'],
       Ruby: ['#550012', '#b90028', '#ff3755', '#ff96a5', '#a50023'],
       Galaxy: ['#4f72ff', '#6947ff', '#a342ff', '#e45cff', '#ff3f8b', '#ff4d5f'],
@@ -237,7 +238,7 @@ export class DeckHelperApp {
   }
 
   private borderRarityMultiplier(borders: BorderName[]): number {
-    const multipliers: Record<BorderName, number> = { Platinum: 100, Crystal: 10_000, Ruby: 100_000, Galaxy: 1_000_000 }
+    const multipliers: Record<BorderName, number> = { Platinum: 100, Emerald: 1_000, Crystal: 10_000, Ruby: 100_000, Galaxy: 1_000_000 }
     return canonicalBorders(borders).reduce((value, border) => value * multipliers[border], 1)
   }
 
